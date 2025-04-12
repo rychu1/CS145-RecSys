@@ -83,7 +83,7 @@ The platform evaluates recommenders using the following metrics:
 
 ### Prerequisites
 
-- Python 3.8+
+- Python 3.9
 - Java 8+ (required for PySpark)
 
 ### Setup
@@ -98,6 +98,8 @@ cd CS145-RecSys
 ```bash
 pip install --upgrade pip wheel poetry
 poetry install
+pip install PyYAML==6.0.1
+pip install pyspark==3.5.5 numpy matplotlib==3.7.5 seaborn==0.13.2 torch sdv==0.18.0 pyarrow
 ```
 
 ## Getting Started
