@@ -90,16 +90,21 @@ cd CS145-RecSys
 ```
 
 2. [Install OpenJDK 17](https://adoptium.net/temurin/releases/?version=17) (Java 17 is the highest version supported by Apache Spark).
-  - Check that Java 17 was installed successfully:
-    ```bash
-    java -version
-    ```
+    - Check that Java 17 was installed successfully:
+      ```bash
+      java -version
+      ```
 
 3. [Install uv](https://docs.astral.sh/uv/getting-started/installation/) (Python package manager).
 
 4. Run any of the Python files with `uv run` (dependencies will be installed automatically), for example:
 ```bash
 uv run recommender_analysis_visualization.py
+```
+
+5. If you want to run a Jupyter notebook:
+```bash
+uv run jupyter lab
 ```
 
 ## Getting Started
