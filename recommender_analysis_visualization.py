@@ -22,7 +22,7 @@ from pyspark.ml.linalg import Vectors, VectorUDT
 from pyspark.sql.types import DoubleType, ArrayType
 
 # Set up plotting
-plt.style.use('seaborn-whitegrid')
+plt.style.use('seaborn-v0_8-whitegrid')
 sns.set_style('whitegrid')
 plt.rcParams['figure.figsize'] = (14, 8)
 

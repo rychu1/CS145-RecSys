@@ -1,0 +1,13 @@
+# Python
+__pycache__
+.venv
+
+# Jupyter
+.ipynb_checkpoints
+
+# Simulator artifacts
+*.png
+simulator_train_test_data_*
+
+# macOS
+.DS_Store
