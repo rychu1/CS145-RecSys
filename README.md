@@ -81,25 +81,30 @@ The platform evaluates recommenders using the following metrics:
 
 ## Installation
 
-### Prerequisites
-
-- Python 3.9
-- Java 8+ (required for PySpark)
-
 ### Setup
 
-1. Clone this repository
+1. Clone this repository:
 ```bash
-git clone https://github.com/FrancoTSolis/CS145-RecSys.git
+git clone https://github.com/FrancoTSolis/CS145-RecSys
 cd CS145-RecSys
 ```
 
-2. Install dependencies
+2. [Install OpenJDK 17](https://adoptium.net/temurin/releases/?version=17) (Java 17 is the highest version supported by Apache Spark).
+    - Check that Java 17 was installed successfully:
+      ```bash
+      java -version
+      ```
+
+3. [Install uv](https://docs.astral.sh/uv/getting-started/installation/) (Python package manager).
+
+4. Run any of the Python files with `uv run` (dependencies will be installed automatically), for example:
 ```bash
-pip install --upgrade pip wheel poetry
-poetry install
-pip install PyYAML==6.0.1
-pip install pyspark==3.5.5 numpy matplotlib==3.7.5 seaborn==0.13.2 torch sdv==0.18.0 pyarrow
+uv run recommender_analysis_visualization.py
+```
+
+5. If you want to run a Jupyter notebook:
+```bash
+uv run jupyter lab
 ```
 
 ## Getting Started
@@ -113,7 +118,7 @@ The main execution flow is in `recommender_analysis_visualization.py`, which:
 
 Run the analysis script to get started:
 ```bash
-python recommender_analysis_visualization.py
+uv run recommender_analysis_visualization.py
 ```
 
 This will:
