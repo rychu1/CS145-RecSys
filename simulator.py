@@ -434,6 +434,8 @@ class CompetitionSimulator:
             k=k,
             users=users,
             items=items,
+            user_features=users,
+            item_features=items,
             filter_seen_items=filter_seen_items
         ).cache()
         
@@ -534,6 +536,10 @@ class CompetitionSimulator:
             
             # Retrain the recommender if needed
             if retrain and i < n_iterations - 1:
+                # Prepare full users/items feature dataframes for training (use the entire catalog)
+                full_user_features = self.simulator.sample_users(1.0).cache()
+                full_item_features = self.simulator.sample_items(1.0).cache()
+                
                 # Check if the log dataframe contains a 'response' column
                 columns = [field.name for field in self.simulator.log.schema.fields]
                 
@@ -552,7 +558,11 @@ class CompetitionSimulator:
                     ).drop("response")
                     
                     # Train the recommender
-                    recommender.fit(log=training_log)
+                    recommender.fit(
+                        log=training_log,
+                        user_features=full_user_features,
+                        item_features=full_item_features
+                    )
                 else:
                     # If no response column, check if the existing relevance column needs to be binarized
                     training_log = self.simulator.log
@@ -564,8 +574,12 @@ class CompetitionSimulator:
                     )
                     
                     # Train the recommender
-                    recommender.fit(log=training_log)
-                
+                    recommender.fit(
+                        log=training_log,
+                        user_features=full_user_features,
+                        item_features=full_item_features
+                    )
+        
         return self.metrics_history, self.revenue_history
     
     def compare_recommenders(
@@ -691,7 +705,11 @@ class CompetitionSimulator:
             
             # Retrain the recommender if needed
             if retrain and i < train_iterations - 1:
-                # Use same retraining logic as in run_simulation
+                # Prepare full users/items feature dataframes for training (use the entire catalog)
+                full_user_features = self.simulator.sample_users(1.0)
+                full_item_features = self.simulator.sample_items(1.0)
+                
+                # Check if the log dataframe contains a 'response' column
                 columns = [field.name for field in self.simulator.log.schema.fields]
                 
                 if 'response' in columns:
@@ -709,7 +727,11 @@ class CompetitionSimulator:
                     ).drop("response")
                     
                     # Train the recommender
-                    recommender.fit(log=training_log)
+                    recommender.fit(
+                        log=training_log,
+                        user_features=full_user_features,
+                        item_features=full_item_features
+                    )
                 else:
                     # If no response column, check if the existing relevance column needs to be binarized
                     training_log = self.simulator.log
@@ -721,9 +743,16 @@ class CompetitionSimulator:
                     )
                     
                     # Train the recommender
-                    recommender.fit(log=training_log)
+                    recommender.fit(
+                        log=training_log,
+                        user_features=full_user_features,
+                        item_features=full_item_features
+                    )
         
         # One final retraining using all training data
+        full_user_features_final = self.simulator.sample_users(1.0)
+        full_item_features_final = self.simulator.sample_items(1.0)
+
         columns = [field.name for field in self.simulator.log.schema.fields]
         training_log = self.simulator.log
         if 'response' in columns:
@@ -742,9 +771,13 @@ class CompetitionSimulator:
                 "relevance",
                 sf.when(sf.col("relevance") > 0, 1).otherwise(0)
             )
-        
+
         # Train the recommender one last time on all training data
-        recommender.fit(log=training_log)
+        recommender.fit(
+            log=training_log,
+            user_features=full_user_features_final,
+            item_features=full_item_features_final
+        )
         
         print("\nStarting Testing Phase:")
         # Testing phase (no retraining)
