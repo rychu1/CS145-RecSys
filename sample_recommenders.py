@@ -4,6 +4,7 @@ from typing import Optional, List, Dict, Any
 
 from pyspark.sql import DataFrame, Window
 from pyspark.sql import functions as sf
+from pyspark.sql.functions import col
 from pyspark.ml.feature import VectorAssembler
 from pyspark.ml.linalg import Vectors, VectorUDT
 from pyspark.sql.types import DoubleType, ArrayType
@@ -84,7 +85,13 @@ class SVMRecommender(BaseRecommender):
 
         cross['price'] = cross['orig_price']
        
-        return pandas_to_spark(cross)
+        recs_spark = pandas_to_spark(cross)
+        recs_spark = (
+           recs_spark
+            .withColumn("user_idx", col("user_idx").cast("int"))
+            .withColumn("item_idx", col("item_idx").cast("int"))
+            )
+        return recs_spark
         
 
 
