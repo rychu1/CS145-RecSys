@@ -15,7 +15,7 @@ from pyspark.sql.types import LongType
 
 class LogRegModel(BaseRecommender):
     """
-    Custom recommender based on a scikit-learn Linear Regression model.
+    Custom recommender based on a scikit-learn Losgistic Regression model.
     Fits using only numeric features, without scaling or categorical encoding.
     """
     def __init__(self, seed=None):
@@ -27,13 +27,12 @@ class LogRegModel(BaseRecommender):
 
     def fit(self, log: DataFrame, user_features: Optional[DataFrame] = None, item_features: Optional[DataFrame] = None):
         """
-        Trains the scikit-learn Linear Regression model using only numeric features.
+        Trains the scikit-learn Logistic Regression model using only numeric features.
         Data is converted to Pandas for preprocessing and training.
         """
         if user_features is None or item_features is None:
-            raise ValueError("User and item features are required for a content-based linear regression recommender.")
+            raise ValueError("User and item features are required for a content-based logistic regression recommender.")
 
-        # print("Starting scikit-learn Linear Regression model training (numeric features only)...")
 
         # Join Spark DataFrames and convert to Pandas for processing
         training_data_pd = log.join(user_features, on='user_idx', how='inner') \
