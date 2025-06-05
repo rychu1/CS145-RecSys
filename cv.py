@@ -804,88 +804,111 @@ print("Exploratory analysis complete.")
 
 user_generator, item_generator = data_generator.setup_data_generators()
 # Define hyperparameter grid
-param_grid = {
-    'n_estimators': [50, 100, 200],
-    'learning_rate': [0.01, 0.1, 0.2],
-    'max_depth': [3, 5, 7],
-    'subsample': [0.7, 0.8, 0.9],
-    'colsample_bytree': [0.7, 0.8, 0.9],
-    'alpha': [0, 1, 10]
+# Define search space for each parameter (start, end, step)
+param_ranges = {
+    'n_estimators': (50, 200, 50),
+    'learning_rate': (0.01, 0.3, 0.05),
+    'max_depth': (3, 7, 2),
+    'subsample': (0.7, 0.9, 0.1),
+    'colsample_bytree': (0.7, 0.9, 0.1),
+    'alpha': (0.0, 10.0, 5.0)
 }
 
-# Create parameter combinations
-param_combinations = list(ParameterGrid(param_grid))
-
-# Placeholder for best results
-best_params = None
+# Start with initial parameters
+current_params = {param: rng[0] for param, rng in param_ranges.items()}
 best_revenue = -np.inf
-
+tolerance = 500  # Dollar threshold for improvement
+iter = 0;
+improvement = float('inf')
 results = []
-
-for params in param_combinations:
-    # Clean up any existing simulator data directory for this recommender
-    simulator_data_dir = f"simulator_cv_temp"
-    if os.path.exists(simulator_data_dir):
-        shutil.rmtree(simulator_data_dir)
-        print(f"Removed existing simulator data directory: {simulator_data_dir}")
+while improvement >= tolerance and iter < 50:  # Limit iterations to avoid infinite loop
     
-    # Ensure 'relevance' column is LongType for compatibility
-    from pyspark.sql.types import LongType
+    improvement = 0
+    for param, (start, end, step) in param_ranges.items():
+        candidate_values = np.arange(start, end + 1e-8, step)
+        best_local_revenue = best_revenue
+        best_local_value = current_params[param]
 
-    history_df_casted = data_generator.history_df.withColumn(
-        "relevance", data_generator.history_df["relevance"].cast(LongType())
-    )
-    print(f"Testing parameters: {params}")
+        for value in candidate_values:
+            trial_params = current_params.copy()
+            trial_params[param] = round(value, 4)  # Ensure numeric stability
+            if param=='depth':
+                trial_params['max_depth'] = int(value)
+            elif param=='n_estimators':
+                trial_params['n_estimators'] = int(value)
 
-    # Initialize recommender with current parameters
-    recommender = GradientBoostRecommender(seed=29, **params)
-    
-    # Fit model
-    recommender.fit(log=history_df_casted,
-                    user_features=data_generator.users_df,
-                    item_features=data_generator.items_df)
+
+            # Clean simulator state
+            simulator_data_dir = f"simulator_cv_temp"
+            if os.path.exists(simulator_data_dir):
+                shutil.rmtree(simulator_data_dir)
+
+            from pyspark.sql.types import LongType
+            history_df_casted = data_generator.history_df.withColumn(
+                "relevance", data_generator.history_df["relevance"].cast(LongType())
+            )
+
+            print(f"Testing {param}={value} | Current: {current_params}")
+
+            recommender = GradientBoostRecommender(seed=42, **trial_params)
+            recommender.fit(
+                log=history_df_casted,
+                user_features=data_generator.users_df,
+                item_features=data_generator.items_df
+            )
 
     # Initialize simulator
-    simulator = CompetitionSimulator(
-        user_generator=user_generator,
-        item_generator=item_generator,
-        log_df=history_df_casted,
-        data_dir='simulator_cv_temp',
-        conversion_noise_mean=DEFAULT_CONFIG['simulation']['conversion_noise_mean'],
-        conversion_noise_std=DEFAULT_CONFIG['simulation']['conversion_noise_std'],
-        spark_session=spark,
-        seed=29
-    )
+            simulator = CompetitionSimulator(
+                user_generator=user_generator,
+                item_generator=item_generator,
+                log_df=history_df_casted,
+                data_dir='simulator_cv_temp',
+                conversion_noise_mean=DEFAULT_CONFIG['simulation']['conversion_noise_mean'],
+                conversion_noise_std=DEFAULT_CONFIG['simulation']['conversion_noise_std'],
+                spark_session=spark,
+                seed=42
+            )
 
-    # Run train-test simulation
-    _, test_metrics, _, test_revenue = simulator.train_test_split(
-        recommender=recommender,
-        train_iterations=DEFAULT_CONFIG['simulation']['train_iterations'],
-        test_iterations=DEFAULT_CONFIG['simulation']['test_iterations'],
-        user_frac=DEFAULT_CONFIG['simulation']['user_fraction'],
-        k=DEFAULT_CONFIG['simulation']['k'],
-        filter_seen_items=True,
-        retrain=False
-    )
+            # Run train-test simulation
+            _, test_metrics, _, test_revenue = simulator.train_test_split(
+                recommender=recommender,
+                train_iterations=DEFAULT_CONFIG['simulation']['train_iterations'],
+                test_iterations=DEFAULT_CONFIG['simulation']['test_iterations'],
+                user_frac=DEFAULT_CONFIG['simulation']['user_fraction'],
+                k=DEFAULT_CONFIG['simulation']['k'],
+                filter_seen_items=True,
+                retrain=False
+            )
 
-    total_test_revenue = np.sum(test_revenue)
-    print(f"Total test revenue: {total_test_revenue:.2f}")
+            total_revenue = np.sum(test_revenue)
+            print(f"Revenue: ${total_revenue:.2f}")
 
-    results.append({**params, "total_test_revenue": total_test_revenue})
+            results.append({**trial_params, 'total_test_revenue': total_revenue})
 
-    # Update best parameters
-    if total_test_revenue > best_revenue:
-        best_revenue = total_test_revenue
-        best_params = params
+            if total_revenue > best_local_revenue:
+                best_local_revenue = total_revenue
+                best_local_value = value
 
-# Summarize results
+        # Apply best found for this parameter if improvement was achieved
+        if best_local_revenue - best_revenue >= tolerance:
+            print(f"Updating {param}: {current_params[param]} → {best_local_value}")
+            current_params[param] = best_local_value
+            if param=='depth':
+                current_params['max_depth'] = int(value)
+            elif param=='n_estimators':
+                current_params['n_estimators'] = int(value)
+
+            improvement = best_local_revenue - best_revenue
+            best_revenue = best_local_revenue
+    iter += 1
+
+
 df_results = pd.DataFrame(results)
 df_results = df_results.sort_values(by='total_test_revenue', ascending=False)
+df_results.to_csv('gradient_boost_adaptive_search_results.csv', index=False)
 
 print("\nBest parameters found:")
-print(best_params)
-print(f"Best average test revenue: {best_revenue:.2f}")
+print(current_params)
+print(f"Best test revenue: ${best_revenue:.2f}")
+print("Results saved to 'gradient_boost_adaptive_search_results.csv'")
 
-# Save results to CSV
-df_results.to_csv('gradient_boost_cv_results.csv', index=False)
-print("All results saved to 'gradient_boost_cv_results.csv'")
