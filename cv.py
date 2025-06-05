@@ -894,9 +894,9 @@ while improvement >= tolerance and iter < 50:  # Limit iterations to avoid infin
             print(f"Updating {param}: {current_params[param]} → {best_local_value}")
             current_params[param] = best_local_value
             if param=='max_depth':
-                current_params[param] = int(value)
+                current_params[param] = int(best_local_value)
             elif param=='n_estimators':
-                current_params[param] = int(value)
+                current_params[param] = int(best_local_value)
 
             improvement = best_local_revenue - best_revenue
             best_revenue = best_local_revenue
