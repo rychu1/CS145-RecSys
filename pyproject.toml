@@ -10,4 +10,5 @@ dependencies = [
     "pyspark>=3.5.5",
     "sdv>=0.18,<0.19",
     "seaborn>=0.13.2",
+    "xgboost>=3.0.2",
 ]
