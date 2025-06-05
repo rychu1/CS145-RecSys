@@ -19,12 +19,12 @@ class GradientBoostRecommender(BaseRecommender):
     Applies StandardScaler to features.
     """
     def __init__(self, seed=None,
-                 n_estimators: int = 100,      # Number of boosting rounds
-                 learning_rate: float = 0.1,   # Step size shrinkage
-                 max_depth: int = 6,           # Maximum depth of a tree
-                 subsample: float = 0.8,       # Subsample ratio of the training instance
-                 colsample_bytree: float = 0.8, # Subsample ratio of columns when constructing each tree,
-                 alpha: float = 1           # L1 regularization term on weights
+                 n_estimators: int = 150,      # Number of boosting rounds
+                 learning_rate: float = 0.01,   # Step size shrinkage
+                 max_depth: int = 3,           # Maximum depth of a tree
+                 subsample: float = 0.7,       # Subsample ratio of the training instance
+                 colsample_bytree: float = 0.7, # Subsample ratio of columns when constructing each tree,
+                 alpha: float = 0           # L1 regularization term on weights
                 ):
         super().__init__(seed=seed)
         # Initialize XGBoost Classifier model for binary relevance
