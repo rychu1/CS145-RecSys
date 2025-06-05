@@ -175,6 +175,7 @@ class SDVDataGenerator(GeneratorBase, HasParallelizationLevel, HasDevice):
     """
     Synthetic data generator with a bunch of models from SDV library
     """
+    '''
     _model : Optional[Union[CopulaGAN, CTGAN, GaussianCopula, TVAE]] = None
 
     SEED_COLUMN_NAME = '__seed'
@@ -185,6 +186,7 @@ class SDVDataGenerator(GeneratorBase, HasParallelizationLevel, HasDevice):
         'gaussiancopula' : GaussianCopula,
         'tvae' : TVAE
     }
+    ''' 
 
     # pylint: disable=too-many-arguments
     def __init__(
