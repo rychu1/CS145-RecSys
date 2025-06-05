@@ -1,99 +1,78 @@
 #!/bin/bash
 
-# Deployment script for CS145 Leaderboard to UCLA CS servers
-# Usage: ./deploy.sh
+# CS145 Leaderboard Deployment Script
+# Run this script on your lab server (fts@scai2.cs.ucla.edu)
 
-set -e
+echo "🚀 Starting CS145 Leaderboard deployment..."
 
-# Configuration
-REMOTE_USER="fts"
-REMOTE_HOST="lion.cs.ucla.edu"
-REMOTE_PATH="~/www/cs145-leaderboard"
-LOCAL_PATH="."
+# Set up directories
+echo "📁 Setting up directories..."
+mkdir -p uploads
+mkdir -p logs
 
-echo "🚀 Deploying CS145 Leaderboard to UCLA CS servers..."
+# Check Python version
+echo "🐍 Checking Python version..."
+python3 --version
 
-# Create remote directory structure
-echo "📁 Creating remote directory structure..."
-ssh ${REMOTE_USER}@${REMOTE_HOST} "mkdir -p ${REMOTE_PATH}/{templates,uploads,static}"
+# Install/upgrade pip
+echo "📦 Installing dependencies..."
+python3 -m pip install --user --upgrade pip
 
-# Copy application files
-echo "📤 Copying application files..."
-scp app_production.py ${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_PATH}/
-scp wsgi.py ${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_PATH}/
-scp evaluation.py ${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_PATH}/
-scp requirements.txt ${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_PATH}/
-scp README.md ${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_PATH}/
+# Install requirements
+python3 -m pip install --user Flask==2.3.3 Werkzeug==2.3.7 numpy pandas scikit-learn pyspark
 
-# Copy templates
-echo "📄 Copying templates..."
-scp templates/*.html ${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_PATH}/templates/
+# Set up environment variables
+echo "🔧 Setting up environment..."
+export FLASK_APP=app.py
+export FLASK_ENV=production
+export PYTHONPATH="${PYTHONPATH}:$(pwd)"
 
-# Copy course-specific files
-echo "📚 Copying course files..."
-if [ -f "data_generator.py" ]; then
-    scp data_generator.py ${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_PATH}/
-fi
-if [ -f "simulator.py" ]; then
-    scp simulator.py ${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_PATH}/
-fi
-if [ -f "config.py" ]; then
-    scp config.py ${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_PATH}/
-fi
-if [ -f "sample_recommenders.py" ]; then
-    scp sample_recommenders.py ${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_PATH}/
+# Make the script executable
+chmod +x deploy.sh
+
+echo "✅ Dependencies installed successfully!"
+
+# Check if Java is available for PySpark
+echo "☕ Checking Java availability..."
+if command -v java &> /dev/null; then
+    echo "✅ Java is available: $(java -version 2>&1 | head -n 1)"
+else
+    echo "⚠️  Java not found. PySpark may not work properly."
+    echo "   You may need to install Java: sudo apt-get install openjdk-11-jre-headless"
 fi
 
-# Copy sim4rec directory
-echo "🧠 Copying sim4rec module..."
-if [ -d "sim4rec" ]; then
-    scp -r sim4rec ${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_PATH}/
-fi
-
-# Copy Apache configuration
-echo "⚙️  Copying Apache configuration..."
-scp .htaccess ${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_PATH}/
-
-# Set permissions
-echo "🔐 Setting permissions..."
-ssh ${REMOTE_USER}@${REMOTE_HOST} "
-    cd ${REMOTE_PATH}
-    chmod 755 .
-    chmod 644 *.py
-    chmod 755 wsgi.py
-    chmod 644 templates/*.html
-    chmod 644 .htaccess
-    chmod 755 uploads
-    chmod 644 *.txt *.md
-    # Set proper permissions for sim4rec directory
-    if [ -d sim4rec ]; then
-        chmod -R 755 sim4rec
-        find sim4rec -name '*.py' -exec chmod 644 {} \;
+# Check if port is available
+echo "🔍 Checking if port 5431 is available..."
+if ! command -v netstat &> /dev/null; then
+    echo "⚠️  netstat not available, skipping port check"
+else
+    if netstat -tuln | grep -q ":5431 "; then
+        echo "⚠️  Port 5431 is already in use. You may need to choose a different port."
+    else
+        echo "✅ Port 5431 is available"
     fi
-"
+fi
 
-# Install Python dependencies
-echo "📦 Installing Python dependencies..."
-ssh ${REMOTE_USER}@${REMOTE_HOST} "
-    cd ${REMOTE_PATH}
-    python3 -m pip install --user -r requirements.txt
-"
-
-# Test the deployment
-echo "🧪 Testing deployment..."
-ssh ${REMOTE_USER}@${REMOTE_HOST} "
-    cd ${REMOTE_PATH}
-    python3 -c 'from app_production import app; print(\"✅ App imports successfully\")'
-"
-
-echo "✅ Deployment completed!"
-echo "🌐 Your leaderboard should be accessible at:"
-echo "   https://web.cs.ucla.edu/~fts/cs145-leaderboard/"
 echo ""
-echo "📝 Next steps:"
-echo "   1. Test the deployment by visiting the URL above"
-echo "   2. Check Apache error logs if there are issues:"
-echo "      ssh ${REMOTE_USER}@${REMOTE_HOST} 'tail -f ~/www/cs145-leaderboard/error.log'"
-echo "   3. Monitor application logs in the uploads directory"
-echo "   4. You can check the status with:"
-echo "      ssh ${REMOTE_USER}@${REMOTE_HOST} 'ls -la ~/www/cs145-leaderboard/'" 
+echo "🎯 Deployment complete! To start the application:"
+echo ""
+echo "   # Option 1: Run in foreground (for testing)"
+echo "   python3 app.py"
+echo ""
+echo "   # Option 2: Run in background (recommended)"
+echo "   nohup python3 app.py > logs/app.log 2>&1 &"
+echo ""
+echo "   # Option 3: Use the start script"
+echo "   ./start.sh"
+echo ""
+echo "📍 Access the application at: http://scai2.cs.ucla.edu:5431"
+echo "📊 Admin dashboard at: http://scai2.cs.ucla.edu:5431/admin"
+echo ""
+echo "📝 To stop the application:"
+echo "   pkill -f 'python3 app.py'"
+echo ""
+echo "📋 To check if it's running:"
+echo "   ps aux | grep 'python3 app.py'"
+echo ""
+echo "📄 To view logs:"
+echo "   tail -f logs/app.log"

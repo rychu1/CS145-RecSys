@@ -101,7 +101,8 @@
     <div class="col-md-3">
         <div class="card">
             <div class="card-body text-center">
-                <h3 class="text-info">{{ "%.4f"|format(results|map(attribute=3)|list|average if results else 0) }}</h3>
+                {% set score_values = results|map(attribute=3)|list %}
+                <h3 class="text-info">{{ "%.4f"|format(score_values|average if score_values else 0) }}</h3>
                 <p class="mb-0">Average Score</p>
             </div>
         </div>
@@ -109,7 +110,8 @@
     <div class="col-md-3">
         <div class="card">
             <div class="card-body text-center">
-                <h3 class="text-warning">{{ results|map(attribute=0)|list|unique|list|length if results else 0 }}</h3>
+                {% set unique_teams = results|map(attribute=0)|list|unique|list %}
+                <h3 class="text-warning">{{ unique_teams|length if unique_teams else 0 }}</h3>
                 <p class="mb-0">Unique Teams</p>
             </div>
         </div>

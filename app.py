@@ -24,6 +24,14 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 # Ensure upload directory exists
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
+# Add custom Jinja2 filters
+@app.template_filter('average')
+def average_filter(values):
+    """Calculate average of a list of values."""
+    if not values:
+        return 0
+    return sum(values) / len(values)
+
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
