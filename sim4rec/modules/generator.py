@@ -9,7 +9,7 @@ import torch
 import pyspark.sql.types as st
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as sf
-from sdv.tabular import CopulaGAN, CTGAN, GaussianCopula, TVAE
+# from sdv.tabular import CopulaGAN, CTGAN, GaussianCopula, TVAE
 
 from sim4rec.utils.session_handler import State
 from sim4rec.params import (
