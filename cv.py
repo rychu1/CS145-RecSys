@@ -832,8 +832,8 @@ while improvement >= tolerance and iter < 50:  # Limit iterations to avoid infin
         for value in candidate_values:
             trial_params = current_params.copy()
             trial_params[param] = round(value, 4)  # Ensure numeric stability
-            if param=='depth':
-                trial_params['max_depth'] = int(value)
+            if param=='max_depth':
+                trial_params[param] = int(value)
             elif param=='n_estimators':
                 trial_params['n_estimators'] = int(value)
 
@@ -893,10 +893,10 @@ while improvement >= tolerance and iter < 50:  # Limit iterations to avoid infin
         if best_local_revenue - best_revenue >= tolerance:
             print(f"Updating {param}: {current_params[param]} → {best_local_value}")
             current_params[param] = best_local_value
-            if param=='depth':
-                current_params['max_depth'] = int(value)
+            if param=='max_depth':
+                current_params[param] = int(value)
             elif param=='n_estimators':
-                current_params['n_estimators'] = int(value)
+                current_params[param] = int(value)
 
             improvement = best_local_revenue - best_revenue
             best_revenue = best_local_revenue
