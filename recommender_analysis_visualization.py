@@ -823,7 +823,7 @@ recommender_names = [
     "Popularity",
     "ContentBased",
     # "MyRecommender",
-    "LinearRegression",
+    # "LinearRegression",
     "GradientBoost"
     ]
 # Fit each recommender on the initial history
