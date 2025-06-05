@@ -16,13 +16,14 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from collections import defaultdict
 import shutil
-
+from sklearn.model_selection import ParameterGrid
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as sf
 from pyspark.sql import DataFrame, Window
 from pyspark.ml.feature import VectorAssembler
 from pyspark.ml.linalg import Vectors, VectorUDT
 from pyspark.sql.types import DoubleType, ArrayType, Optional
+from gradientBoost import GradientBoostRecommender
 
 # Set up plotting
 plt.style.use('seaborn-v0_8-whitegrid')
@@ -801,50 +802,29 @@ print("\n=== Starting Exploratory Data Analysis ===")
 
 print("Exploratory analysis complete.")
 
-# %% [markdown]
-# ## Set up Generators and Recommenders
-
-# %%
-# Prepare data generators for the simulator
 user_generator, item_generator = data_generator.setup_data_generators()
-from gradientBoost import GradientBoostRecommender
-from linearRegression import LinearRegressionRecommender
-# Initialize the recommenders we want to compare
-recommenders = [
-    RandomRecommender(seed=config['data_generation']['seed']),
-    # PopularityRecommender(alpha=1.0, seed=config['data_generation']['seed']),
-    # ContentBasedRecommender(similarity_threshold=0.0, seed=config['data_generation']['seed']),
-    # MyRecommender(seed=config['data_generation']['seed']),  # Custom template class
-    # LinearRegressionRecommender(seed=config['data_generation']['seed']),
-    GradientBoostRecommender(seed=config['data_generation']['seed']),
-]
-recommender_names = [
-    "Random",
-    # "Popularity",
-    # "ContentBased",
-    # "MyRecommender",
-    # "LinearRegression",
-    "GradientBoost"
-    ]
-# Fit each recommender on the initial history
-for recommender in recommenders:
-    recommender.fit(log=data_generator.history_df, user_features=data_generator.users_df, item_features=data_generator.items_df)
+# Define hyperparameter grid
+param_grid = {
+    'n_estimators': [50, 100, 200],
+    'learning_rate': [0.01, 0.1, 0.2],
+    'max_depth': [3, 5, 7],
+    'subsample': [0.7, 0.8, 0.9],
+    'colsample_bytree': [0.7, 0.8, 0.9],
+    'alpha': [0, 1, 10]
+}
 
-print("Recommenders set up and initial fit complete.")
+# Create parameter combinations
+param_combinations = list(ParameterGrid(param_grid))
 
-# %% [markdown]
-# ## Train-Test Simulation and Evaluation
-
-# %%
-import pandas as pd
+# Placeholder for best results
+best_params = None
+best_revenue = -np.inf
 
 results = []
 
-for name, recommender in zip(recommender_names, recommenders):
-    print(f"\nEvaluating {name}:")
-    
+for params in param_combinations:
     # Clean up any existing simulator data directory for this recommender
-    simulator_data_dir = f"simulator_train_test_data_{name}"
+    simulator_data_dir = f"simulator_cv_temp"
     if os.path.exists(simulator_data_dir):
         shutil.rmtree(simulator_data_dir)
         print(f"Removed existing simulator data directory: {simulator_data_dir}")
@@ -855,96 +835,57 @@ for name, recommender in zip(recommender_names, recommenders):
     history_df_casted = data_generator.history_df.withColumn(
         "relevance", data_generator.history_df["relevance"].cast(LongType())
     )
+    print(f"Testing parameters: {params}")
+
+    # Initialize recommender with current parameters
+    recommender = GradientBoostRecommender(seed=29, **params)
+    
+    # Fit model
+    recommender.fit(log=history_df_casted,
+                    user_features=data_generator.users_df,
+                    item_features=data_generator.items_df)
 
     # Initialize simulator
     simulator = CompetitionSimulator(
         user_generator=user_generator,
         item_generator=item_generator,
-        data_dir=simulator_data_dir,
-        log_df=history_df_casted,  # Use casted DataFrame
-        conversion_noise_mean=config['simulation']['conversion_noise_mean'],
-        conversion_noise_std=config['simulation']['conversion_noise_std'],
+        log_df=history_df_casted,
+        data_dir='simulator_cv_temp',
+        conversion_noise_mean=DEFAULT_CONFIG['simulation']['conversion_noise_mean'],
+        conversion_noise_std=DEFAULT_CONFIG['simulation']['conversion_noise_std'],
         spark_session=spark,
-        seed=config['data_generation']['seed']
+        seed=29
     )
-    
-    # Run simulation with train-test split
-    train_metrics, test_metrics, train_revenue, test_revenue = simulator.train_test_split(
+
+    # Run train-test simulation
+    _, test_metrics, _, test_revenue = simulator.train_test_split(
         recommender=recommender,
-        train_iterations=train_iterations,
-        test_iterations=test_iterations,
-        user_frac=config['simulation']['user_fraction'],
-        k=config['simulation']['k'],
-        filter_seen_items=config['simulation']['filter_seen_items'],
-        retrain=config['simulation']['retrain']
+        train_iterations=DEFAULT_CONFIG['simulation']['train_iterations'],
+        test_iterations=DEFAULT_CONFIG['simulation']['test_iterations'],
+        user_frac=DEFAULT_CONFIG['simulation']['user_fraction'],
+        k=DEFAULT_CONFIG['simulation']['k'],
+        filter_seen_items=True,
+        retrain=False
     )
-    
-    # Calculate average metrics
-    train_avg_metrics = {}
-    for metric_name in train_metrics[0].keys():
-        values = [m[metric_name] for m in train_metrics]
-        train_avg_metrics[f"train_{metric_name}"] = np.mean(values)
-    
-    test_avg_metrics = {}
-    for metric_name in test_metrics[0].keys():
-        values = [m[metric_name] for m in test_metrics]
-        test_avg_metrics[f"test_{metric_name}"] = np.mean(values)
-    
-    # Store results
-    results.append({
-        "name": name,
-        "train_total_revenue": sum(train_revenue),
-        "test_total_revenue": sum(test_revenue),
-        "train_avg_revenue": np.mean(train_revenue),
-        "test_avg_revenue": np.mean(test_revenue),
-        "train_metrics": train_metrics,
-        "test_metrics": test_metrics,
-        "train_revenue": train_revenue,
-        "test_revenue": test_revenue,
-        **train_avg_metrics,
-        **test_avg_metrics
-    })
-    
-    # Print summary for this recommender
-    print(f"  Training Phase - Total Revenue: {sum(train_revenue):.2f}")
-    print(f"  Testing Phase - Total Revenue: {sum(test_revenue):.2f}")
-    performance_change = ((sum(test_revenue) / len(test_revenue)) / (sum(train_revenue) / len(train_revenue)) - 1) * 100
-    print(f"  Performance Change: {performance_change:.2f}%")
 
-print("\n=== Simulation and evaluation complete for all recommenders. ===")
+    total_test_revenue = np.sum(test_revenue)
+    print(f"Total test revenue: {total_test_revenue:.2f}")
 
-# Convert to DataFrame for easy comparison
-results_df = pd.DataFrame(results)
-results_df = results_df.sort_values("test_total_revenue", ascending=False).reset_index(drop=True)
+    results.append({**params, "total_test_revenue": total_test_revenue})
 
-# Print summary table
-print("\nRecommender Evaluation Results (sorted by test revenue):")
-summary_cols = [
-    "name", "train_total_revenue", "test_total_revenue", 
-    "train_avg_revenue", "test_avg_revenue",
-    "train_precision_at_k", "test_precision_at_k",
-    "train_ndcg_at_k", "test_ndcg_at_k",
-    "train_mrr", "test_mrr",
-    "train_discounted_revenue", "test_discounted_revenue"
-]
-summary_cols = [col for col in summary_cols if col in results_df.columns]
+    # Update best parameters
+    if total_test_revenue > best_revenue:
+        best_revenue = total_test_revenue
+        best_params = params
 
-if len(summary_cols) > 0:
-    print(results_df[summary_cols].to_string(index=False))
-else:
-    print("No summary columns to display.")
+# Summarize results
+df_results = pd.DataFrame(results)
+df_results = df_results.sort_values(by='total_test_revenue', ascending=False)
 
-# %% [markdown]
-# ## Results Visualization
+print("\nBest parameters found:")
+print(best_params)
+print(f"Best average test revenue: {best_revenue:.2f}")
 
-# %%
-print("\n=== Visualizing Recommender Performance ===")
-visualize_recommender_performance(results_df, recommender_names)
-visualize_detailed_metrics(results_df, recommender_names)
-
-print("\nVisualization complete.")
-
-# %%
-
-
-
+# Save results to CSV
+df_results.to_csv('gradient_boost_cv_results.csv', index=False)
+print("All results saved to 'gradient_boost_cv_results.csv'")

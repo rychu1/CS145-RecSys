@@ -4,6 +4,9 @@
 # We'll generate synthetic data, compare multiple baseline recommenders, and visualize their performance.
 # 
 
+# %%
+# %pip install xgboost --user
+
 # %% [markdown]
 # ## Cell: Import libraries and set up environment
 
@@ -766,7 +769,7 @@ print("Performance visualization functions defined.")
 config = DEFAULT_CONFIG.copy()
 config['data_generation']['n_users'] = 1000  # Reduced from 10,000
 config['data_generation']['n_items'] = 200   # Reduced from 1,000
-config['data_generation']['seed'] = 29       # Fixed seed for reproducibility
+config['data_generation']['seed'] = 42       # Fixed seed for reproducibility
 
 # Get train-test split parameters
 train_iterations = config['simulation']['train_iterations']
@@ -811,20 +814,20 @@ from gradientBoost import GradientBoostRecommender
 from linearRegression import LinearRegressionRecommender
 # Initialize the recommenders we want to compare
 recommenders = [
-    RandomRecommender(seed=config['data_generation']['seed']),
-    # PopularityRecommender(alpha=1.0, seed=config['data_generation']['seed']),
-    # ContentBasedRecommender(similarity_threshold=0.0, seed=config['data_generation']['seed']),
-    # MyRecommender(seed=config['data_generation']['seed']),  # Custom template class
-    # LinearRegressionRecommender(seed=config['data_generation']['seed']),
-    GradientBoostRecommender(seed=config['data_generation']['seed']),
+    RandomRecommender(seed=42),
+    # PopularityRecommender(alpha=1.0, seed=42),
+    # ContentBasedRecommender(similarity_threshold=0.0, seed=42),
+    MyRecommender(seed=42),  # Custom template class
+    # LinearRegressionRecommender(seed=42),
+    # GradientBoostRecommender(seed=42),
 ]
 recommender_names = [
     "Random",
     # "Popularity",
     # "ContentBased",
-    # "MyRecommender",
+    "MyRecommender",
     # "LinearRegression",
-    "GradientBoost"
+    # "GradientBoost"
     ]
 # Fit each recommender on the initial history
 for recommender in recommenders:
