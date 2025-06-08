@@ -29,7 +29,7 @@ Your final submission should demonstrate mastery of all three recommendation par
 
 #### 1. Introduction and Team Information (0.5 page)
 - **Team name and members**
-- **Leaderboard ranking and final score**
+- **Final score on leaderboard**
 - Brief overview of your approach and key contributions
 
 #### 2. Methodology Overview (1.5 pages)
