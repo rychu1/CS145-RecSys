@@ -59,7 +59,7 @@ class SVMRecommender(BaseRecommender):
                 'user_idx', 'item_idx', '__iter'
             ).toPandas()
 
-            pd_log = pd.get_dummies(pd_log)
+            pd_log = pd.get_dummies(pd_log, dtype=float)
             pd_log['price'] = self.scalar.fit_transform(pd_log[['price']])
 
             y = pd_log['relevance']
@@ -72,7 +72,7 @@ class SVMRecommender(BaseRecommender):
             items
         ).drop('__iter').toPandas().copy()
 
-        cross = pd.get_dummies(cross)
+        cross = pd.get_dummies(cross, dtype=float)
         cross['orig_price'] = cross['price']
         cross['price'] = self.scalar.transform(cross[['price']])
 
@@ -84,6 +84,12 @@ class SVMRecommender(BaseRecommender):
         cross = cross.groupby('user_idx').head(k)
 
         cross['price'] = cross['orig_price']
+        
+        # Convert back to Spark and fix schema types to match original log
+        from pyspark.sql.types import LongType
+        result = pandas_to_spark(cross)
+        result = result.withColumn("user_idx", sf.col("user_idx").cast(LongType()))
+        result = result.withColumn("item_idx", sf.col("item_idx").cast(LongType()))
        
         recs_spark = pandas_to_spark(cross)
         recs_spark = (
