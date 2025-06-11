@@ -993,8 +993,8 @@ from linearRegression import LinearRegressionRecommender
 from graphCN import GraphCNRecommender
 # Initialize the recommenders we want to compare
 recommenders = [
-    # RandomRecommender(seed=config['data_generation']['seed']),
-    # PopularityRecommender(alpha=1.0, seed=config['data_generation']['seed']),
+    RandomRecommender(seed=config['data_generation']['seed']),
+    PopularityRecommender(alpha=1.0, seed=config['data_generation']['seed']),
     # # ContentBasedRecommender(similarity_threshold=0.0, seed=config['data_generation']['seed']),
     # # # MyRecommender(seed=config['data_generation']['seed']),  # Custom template class
     # # # LinearRegressionRecommender(seed=config['data_generation']['seed']),
@@ -1002,8 +1002,8 @@ recommenders = [
     GraphCNRecommender(seed=config['data_generation']['seed'])
 ]
 recommender_names = [
-    # "Random",
-    # "Popularity",
+    "Random",
+    "Popularity",
     # # "ContentBased",
     # # "MyRecommender",
     # # "LinearRegression",
@@ -1123,7 +1123,7 @@ else:
 
 # %%
 # print("\n=== Visualizing Recommender Performance ===")
-# visualize_recommender_performance(results_df, recommender_names)
+visualize_recommender_performance(results_df, recommender_names)
 # visualize_detailed_metrics(results_df, recommender_names)
 
 # print("\nVisualization complete.")
