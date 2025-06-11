@@ -14,67 +14,51 @@ from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as sf
 
 # --- 0. Base Recommender Class ---
-class BaseRecommender(ABC):
-    """Abstract base class for recommender models, compatible with sim4rec."""
-    def __init__(self, seed: Optional[int] = None):
-        self.seed = seed
-        if seed is not None:
-            np.random.seed(seed)
-            torch.manual_seed(seed)
-
-    @abstractmethod
-    def fit(self, log: DataFrame, user_features: Optional[DataFrame] = None, item_features: Optional[DataFrame] = None):
-        """Trains the recommender model."""
-        pass
-
-    @abstractmethod
-    def predict(self, log: DataFrame, k: int, users: DataFrame, items: DataFrame,
-                user_features: Optional[DataFrame] = None, item_features: Optional[DataFrame] = None,
-                filter_seen_items: bool = True) -> DataFrame:
-        """Makes top-K recommendations for a set of users."""
-        pass
+# This assumes you have a local file `sample_recommenders.py` with BaseRecommender
+from sample_recommenders import BaseRecommender
+current_params = {'embedding_size': 64, 'num_layers': 2, 'epochs': 50, 'learning_rate': 0.001, 'weight_decay': 9e-05, 'dropout': 0.1}
 
 # --- 2. GCN Model (Internal PyTorch Module) ---
 class GCNModel(nn.Module):
-    """A shallow LightGCN‑flavoured encoder/decoder."""
-
-    def __init__(self, num_nodes: int, embedding_size: int = 64, num_layers: int = 2,
-                 dropout: float = 0.0):
+    """A LightGCN-flavoured encoder with a dot-product decoder."""
+    def __init__(self, num_nodes: int, embedding_size: int, num_layers: int, dropout: float):
         super().__init__()
+        # Embedding layer with max_norm regularization
         self.embedding = nn.Embedding(num_nodes, embedding_size, max_norm=1.0)
         self.convs = nn.ModuleList([GCNConv(embedding_size, embedding_size) for _ in range(num_layers)])
         self.dropout = nn.Dropout(p=dropout)
+        self.init_weights()
+
+    def init_weights(self):
+        """Initialize embeddings with Xavier uniform distribution."""
         nn.init.xavier_uniform_(self.embedding.weight)
 
     def forward(self, edge_index: torch.Tensor) -> torch.Tensor:
-        """Returns node embeddings of shape (num_nodes, embedding_size)."""
+        """Computes node embeddings through GCN layers."""
         x = self.embedding.weight
         for conv in self.convs:
             x = conv(x, edge_index)
-            x = torch.relu_(x)
+            x = torch.relu(x) # Apply ReLU activation
             x = self.dropout(x)
         return x
 
     @staticmethod
     def decode(z: torch.Tensor, edge_label_index: torch.Tensor) -> torch.Tensor:
-        """Dot‑product decoder for a set of edges."""
+        """Computes dot-product scores for a given set of edges."""
         src, dst = z[edge_label_index[0]], z[edge_label_index[1]]
-        return (src * dst).sum(dim=-1)  # (num_edges,)
+        return (src * dst).sum(dim=-1)
 
-# -----------------------------------------------------------------------------
-# 2. Recommender implementation
-# -----------------------------------------------------------------------------
+# --- 3. GraphCN Recommender Implementation ---
 class GraphCNRecommender(BaseRecommender):
-    """Graph‑based collaborative filtering using shallow GCN / BPR‑loss."""
-
+    """Graph-based collaborative filtering using a GCN and BPR loss."""
     def __init__(self, seed: Optional[int] = None,
-                 embedding_size: int = 64,
-                 num_layers: int = 2,
-                 epochs: int = 50,
-                 learning_rate: float = 5e-3,
-                 weight_decay: float = 1e-4,
-                 dropout: float = 0.0,
-                 price_weighting: bool = False):
+                 embedding_size: int = current_params['embedding_size'],
+                 num_layers: int = current_params['num_layers'],
+                 epochs: int = current_params['epochs'],
+                 learning_rate: float = current_params['learning_rate'],
+                 weight_decay: float = current_params['weight_decay'],
+                 dropout: float = current_params['dropout'],
+                 price_weighting: bool = True):
         super().__init__(seed)
         self.embedding_size = embedding_size
         self.num_layers = num_layers
@@ -84,7 +68,7 @@ class GraphCNRecommender(BaseRecommender):
         self.dropout = dropout
         self.price_weighting = price_weighting
 
-        # runtime members
+        # Runtime members, initialized in fit()
         self.model: Optional[GCNModel] = None
         self.data: Optional[Data] = None
         self.user_mapping: dict[int, int] = {}
@@ -92,77 +76,92 @@ class GraphCNRecommender(BaseRecommender):
         self.item_features_pd: Optional[pd.DataFrame] = None
         self.spark: Optional[SparkSession] = None
 
-    # ---------------------------------------------------------------------
-    # 2.1 Fit
-    # ---------------------------------------------------------------------
-    def fit(self, log: DataFrame, user_features: Optional[DataFrame] = None,
-            item_features: Optional[DataFrame] = None):
+    def fit(self, log: DataFrame, user_features: Optional[DataFrame] = None, item_features: Optional[DataFrame] = None):
         if item_features is None:
-            raise ValueError("`item_features` (incl. at least 'item_idx' column) must be provided.")
+            raise ValueError("`item_features` (with 'item_idx') must be provided.")
 
-        # Spark → Pandas
+        print("\n--- [GraphCN] Starting fit() method ---")
         self.spark = log.sparkSession
         log_pd = log.select("user_idx", "item_idx").toPandas()
         self.item_features_pd = item_features.toPandas()
 
-        # **Full vocab**
-        all_users = pd.Series(log_pd["user_idx"].unique())
-        # If user_features provided, merge its user list too
+        # Build vocabulary from ALL available users and items to avoid cold-start blindness
         if user_features is not None:
-            all_users = pd.concat([all_users, user_features.select("user_idx").toPandas()["user_idx"]])
-        all_items = pd.Series(self.item_features_pd["item_idx"].unique())
+            all_users = np.union1d(log_pd["user_idx"].unique(),
+                                   user_features.select("user_idx").toPandas()["user_idx"].unique())
+        else:
+            all_users = log_pd["user_idx"].unique()
+        all_items = self.item_features_pd["item_idx"].unique()
 
-        self._build_graph(log_pd, all_users.unique(), all_items.unique())
 
-        # Model
+        self._build_graph(log_pd, all_users, all_items)
+
         self.model = GCNModel(self.data.num_nodes, self.embedding_size, self.num_layers, self.dropout)
         optimizer = optim.Adam(self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
 
-        # Training loop (BPR) ------------------------------------------------
+        # Training loop with BPR Loss
+        print(f"--- [GraphCN] Starting training for {self.epochs} epochs ---")
         self.model.train()
         train_edges = self.data.train_edge_index
+        num_pos_samples = train_edges.size(1)
+        
         for epoch in range(self.epochs):
             z = self.model(self.data.edge_index)
 
-            # user–item negative sampling only
+            # Bipartite-aware negative sampling with robust fallback
             try:
+                # PyG >= 2.4 API
                 neg_edge_index = negative_sampling(
                     edge_index=self.data.edge_index,
                     num_nodes=self.data.num_nodes,
-                    num_neg_samples=train_edges.size(1),
-                    bipartite=(self.data.num_users, self.data.num_items)  # torch‑geometric ≥2.4
+                    num_neg_samples=num_pos_samples,
+                    method='bipartite',
                 )
-            except TypeError:
-                # Fallback for older torch‑geometric (may include invalid pairs but acceptable on small graphs)
-                neg_edge_index = negative_sampling(
-                    edge_index=self.data.edge_index,
-                    num_nodes=self.data.num_nodes,
-                    num_neg_samples=train_edges.size(1),
-                )
+            except (TypeError, AssertionError):
+                # Fallback for older PyG versions
+                neg_edges = []
+                # Ensure neg_edges is a list of tensors before checking its length
+                collected_neg_edges = 0
+                while collected_neg_edges < num_pos_samples:
+                    raw_neg_batch = negative_sampling(
+                        edge_index=self.data.edge_index,
+                        num_nodes=self.data.num_nodes,
+                        num_neg_samples=num_pos_samples,
+                    )
+                    mask = (raw_neg_batch[0] < self.data.num_users) & (raw_neg_batch[1] >= self.data.num_users)
+                    valid_neg_batch = raw_neg_batch[:, mask]
+                    neg_edges.append(valid_neg_batch)
+                    collected_neg_edges += valid_neg_batch.size(1)
+
+                neg_edge_index = torch.cat(neg_edges, dim=1)[:, :num_pos_samples]
 
             pos_scores = GCNModel.decode(z, train_edges)
             neg_scores = GCNModel.decode(z, neg_edge_index)
-            loss = -(pos_scores - neg_scores).sigmoid().log().mean()
+            
+            # BPR Loss calculation
+            loss = -torch.nn.functional.logsigmoid(pos_scores - neg_scores).mean()
 
             optimizer.zero_grad()
             loss.backward()
+            # Gradient clipping for stability
             nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
             optimizer.step()
+            
+            if (epoch + 1) % 10 == 0:
+                print(f"--- [GraphCN] Epoch {epoch+1}/{self.epochs}, Loss: {loss.item():.4f} ---")
 
+        print("--- [GraphCN] Training complete ---")
         return self
 
-    # ---------------------------------------------------------------------
-    # 2.2 Build graph
-    # ---------------------------------------------------------------------
     def _build_graph(self, log_pd: pd.DataFrame, all_users: np.ndarray, all_items: np.ndarray):
-        """Creates a bipartite graph and related index mappings."""
-        # Id‑to‑contiguous index maps
+        """Creates a bipartite graph using the full user/item vocabulary."""
+        print("--- [GraphCN] Building graph... ---")
         self.user_mapping = {int(u): i for i, u in enumerate(sorted(all_users))}
         self.item_mapping = {int(it): i for i, it in enumerate(sorted(all_items))}
 
-        # Remap training interactions
         log_pd["user_map_idx"] = log_pd["user_idx"].map(self.user_mapping)
         log_pd["item_map_idx"] = log_pd["item_idx"].map(self.item_mapping)
+        log_pd.dropna(subset=['user_map_idx', 'item_map_idx'], inplace=True)
 
         num_users = len(self.user_mapping)
         user_idx_tensor = torch.tensor(log_pd["user_map_idx"].values, dtype=torch.long)
@@ -176,38 +175,33 @@ class GraphCNRecommender(BaseRecommender):
         self.data.num_users = num_users
         self.data.num_items = len(self.item_mapping)
         self.data.num_nodes = self.data.num_users + self.data.num_items
-        self.data.train_edge_index = edge_ui  # directed user→item for BPR
+        self.data.train_edge_index = edge_ui
+        print("--- [GraphCN] Graph construction complete ---")
 
-    # ---------------------------------------------------------------------
-    # 2.3 Predict top‑K
-    # ---------------------------------------------------------------------
+
     def predict(self, log: DataFrame, k: int, users: DataFrame, items: DataFrame,
                 user_features: Optional[DataFrame] = None, item_features: Optional[DataFrame] = None,
                 filter_seen_items: bool = True) -> DataFrame:
         if self.model is None or self.spark is None:
             raise RuntimeError("Call fit() before predict().")
-
+        
+        print("\n--- [GraphCN] Starting predict() method ---")
         self.model.eval()
-        spark = self.spark
 
-        # Outer join user × item (broadcast via Pandas → beware of size!)
         users_pd = users.select("user_idx").toPandas()
         items_pd = items.select("item_idx").toPandas()
         all_pairs = users_pd.assign(key=1).merge(items_pd.assign(key=1), on="key").drop("key", axis=1)
 
-        # Optionally filter already‑seen edges
         if filter_seen_items:
             seen_pd = log.select("user_idx", "item_idx").toPandas()
             all_pairs = all_pairs.merge(seen_pd, on=["user_idx", "item_idx"], how="left", indicator=True)
             all_pairs = all_pairs[all_pairs["_merge"] == "left_only"].drop("_merge", axis=1)
 
-        # Remap IDs – drop pairs containing unknown nodes (should be none)
         all_pairs["user_map_idx"] = all_pairs["user_idx"].map(self.user_mapping)
         all_pairs["item_map_idx"] = all_pairs["item_idx"].map(self.item_mapping)
         all_pairs.dropna(subset=["user_map_idx", "item_map_idx"], inplace=True)
         all_pairs = all_pairs.astype({"user_map_idx": int, "item_map_idx": int})
 
-        # Build prediction edge tensor
         num_users = self.data.num_users
         src = torch.tensor(all_pairs["user_map_idx"].values, dtype=torch.long)
         dst = torch.tensor(all_pairs["item_map_idx"].values, dtype=torch.long) + num_users
@@ -219,7 +213,6 @@ class GraphCNRecommender(BaseRecommender):
 
         all_pairs["score"] = scores.cpu().numpy()
 
-        # Price weighting (optional)
         if self.price_weighting:
             price_lookup = self.item_features_pd.set_index("item_idx")["price"]
             all_pairs["price"] = all_pairs["item_idx"].map(price_lookup)
@@ -227,7 +220,6 @@ class GraphCNRecommender(BaseRecommender):
         else:
             all_pairs["relevance"] = all_pairs["score"]
 
-        # top‑K per user
         all_pairs.sort_values(["user_idx", "relevance"], ascending=[True, False], inplace=True)
         top_k = all_pairs.groupby("user_idx").head(k)
         
@@ -239,4 +231,5 @@ class GraphCNRecommender(BaseRecommender):
                                .withColumn("item_idx", sf.col("item_idx").cast("int")) \
                                .withColumn("relevance", sf.col("relevance").cast("double"))
 
+        print("--- [GraphCN] Prediction complete, returning results ---")
         return recs_spark

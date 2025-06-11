@@ -16,13 +16,14 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from collections import defaultdict
 import shutil
-
+from sklearn.model_selection import ParameterGrid
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as sf
 from pyspark.sql import DataFrame, Window
 from pyspark.ml.feature import VectorAssembler
 from pyspark.ml.linalg import Vectors, VectorUDT
 from pyspark.sql.types import DoubleType, ArrayType, Optional
+from gradientBoost import GradientBoostRecommender
 
 # Set up plotting
 plt.style.use('seaborn-v0_8-whitegrid')
@@ -64,8 +65,8 @@ from simulator import CompetitionSimulator
 from sample_recommenders import (
     RandomRecommender,
     PopularityRecommender,
-    ContentBasedRecommender, 
-    SVMRecommender, 
+    ContentBasedRecommender,
+    SVMRecommender
 )
 from config import DEFAULT_CONFIG, EVALUATION_METRICS
 
@@ -482,190 +483,9 @@ def explore_interactions(history_df, users_df, items_df):
 
 print("Data exploration functions defined.")
 
-# Cell: Recommender Analysis Function
-"""
-## Recommender System Analysis
-This is the main function to run analysis of different recommender systems and visualize the results.
-"""
-
-def run_recommender_analysis():
-    """
-    Run an analysis of different recommender systems and visualize the results.
-    This function creates a synthetic dataset, performs EDA, evaluates multiple recommendation
-    algorithms using train-test split, and visualizes the performance metrics.
-    """
-    # Create a smaller dataset for experimentation
-    config = DEFAULT_CONFIG.copy()
-    config['data_generation']['n_users'] = 1000  # Reduced from 10,000
-    config['data_generation']['n_items'] = 200   # Reduced from 1,000
-    config['data_generation']['seed'] = 42       # Fixed seed for reproducibility
-    
-    # Get train-test split parameters
-    train_iterations = config['simulation']['train_iterations']
-    test_iterations = config['simulation']['test_iterations']
-    
-    print(f"Running train-test simulation with {train_iterations} training iterations and {test_iterations} testing iterations")
-    
-    # Initialize data generator
-    data_generator = CompetitionDataGenerator(
-        spark_session=spark,
-        **config['data_generation']
-    )
-    
-    # Generate user data
-    users_df = data_generator.generate_users()
-    print(f"Generated {users_df.count()} users")
-    
-    # Generate item data
-    items_df = data_generator.generate_items()
-    print(f"Generated {items_df.count()} items")
-    
-    # Generate initial interaction history
-    history_df = data_generator.generate_initial_history(
-        config['data_generation']['initial_history_density']
-    )
-    print(f"Generated {history_df.count()} initial interactions")
-    
-    # Cell: Exploratory Data Analysis
-    """
-    ## Exploratory Data Analysis
-    Let's explore the generated synthetic data before running the recommenders.
-    """
-    
-    # Perform exploratory data analysis on the generated data
-    print("\n=== Starting Exploratory Data Analysis ===")
-    explore_user_data(users_df)
-    explore_item_data(items_df)
-    explore_interactions(history_df, users_df, items_df)
-    
-    # Set up data generators for simulator
-    user_generator, item_generator = data_generator.setup_data_generators()
-    
-    # Cell: Setup and Run Recommenders
-    """
-    ## Recommender Systems Comparison
-    Now we'll set up and evaluate different recommendation algorithms.
-    """
-    
-    # Initialize recommenders to compare
-    recommenders = [
-        SVMRecommender(seed=42), 
-        RandomRecommender(seed=42),
-        PopularityRecommender(alpha=1.0, seed=42),
-        ContentBasedRecommender(similarity_threshold=0.0, seed=42),
-        MyRecommender(seed=42)  # Add your custom recommender here
-    ]
-    recommender_names = ["SVM", "Random", "Popularity", "ContentBased", "MyRecommender"]
-    
-    # Initialize recommenders with initial history
-    for recommender in recommenders:
-        recommender.fit(log=data_generator.history_df, 
-                        user_features=users_df, 
-                        item_features=items_df)
-    
-    # Evaluate each recommender separately using train-test split
-    results = []
-    
-    for name, recommender in zip(recommender_names, recommenders):
-        print(f"\nEvaluating {name}:")
-        
-        # Clean up any existing simulator data directory for this recommender
-        simulator_data_dir = f"simulator_train_test_data_{name}"
-        if os.path.exists(simulator_data_dir):
-            shutil.rmtree(simulator_data_dir)
-            print(f"Removed existing simulator data directory: {simulator_data_dir}")
-        
-        # Initialize simulator
-        simulator = CompetitionSimulator(
-            user_generator=user_generator,
-            item_generator=item_generator,
-            data_dir=simulator_data_dir,
-            log_df=data_generator.history_df,  # PySpark DataFrames don't have copy method
-            conversion_noise_mean=config['simulation']['conversion_noise_mean'],
-            conversion_noise_std=config['simulation']['conversion_noise_std'],
-            spark_session=spark,
-            seed=config['data_generation']['seed']
-        )
-        
-        # Run simulation with train-test split
-        train_metrics, test_metrics, train_revenue, test_revenue = simulator.train_test_split(
-            recommender=recommender,
-            train_iterations=train_iterations,
-            test_iterations=test_iterations,
-            user_frac=config['simulation']['user_fraction'],
-            k=config['simulation']['k'],
-            filter_seen_items=config['simulation']['filter_seen_items'],
-            retrain=config['simulation']['retrain']
-        )
-        
-        # Calculate average metrics
-        train_avg_metrics = {}
-        for metric_name in train_metrics[0].keys():
-            values = [metrics[metric_name] for metrics in train_metrics]
-            train_avg_metrics[f"train_{metric_name}"] = np.mean(values)
-        
-        test_avg_metrics = {}
-        for metric_name in test_metrics[0].keys():
-            values = [metrics[metric_name] for metrics in test_metrics]
-            test_avg_metrics[f"test_{metric_name}"] = np.mean(values)
-        
-        # Store results
-        results.append({
-            "name": name,
-            "train_total_revenue": sum(train_revenue),
-            "test_total_revenue": sum(test_revenue),
-            "train_avg_revenue": np.mean(train_revenue),
-            "test_avg_revenue": np.mean(test_revenue),
-            "train_metrics": train_metrics,
-            "test_metrics": test_metrics,
-            "train_revenue": train_revenue,
-            "test_revenue": test_revenue,
-            **train_avg_metrics,
-            **test_avg_metrics
-        })
-        
-        # Print summary for this recommender
-        print(f"  Training Phase - Total Revenue: {sum(train_revenue):.2f}")
-        print(f"  Testing Phase - Total Revenue: {sum(test_revenue):.2f}")
-        performance_change = ((sum(test_revenue) / len(test_revenue)) / (sum(train_revenue) / len(train_revenue)) - 1) * 100
-        print(f"  Performance Change: {performance_change:.2f}%")
-    
-    # Convert to DataFrame for easy comparison
-    results_df = pd.DataFrame(results)
-    results_df = results_df.sort_values("test_total_revenue", ascending=False).reset_index(drop=True)
-    
-    # Print summary table
-    print("\nRecommender Evaluation Results (sorted by test revenue):")
-    summary_cols = ["name", "train_total_revenue", "test_total_revenue", 
-                   "train_avg_revenue", "test_avg_revenue",
-                   "train_precision_at_k", "test_precision_at_k",
-                   "train_ndcg_at_k", "test_ndcg_at_k",
-                   "train_mrr", "test_mrr",
-                   "train_discounted_revenue", "test_discounted_revenue"]
-    summary_cols = [col for col in summary_cols if col in results_df.columns]
-    
-    print(results_df[summary_cols].to_string(index=False))
-    
-    # Cell: Results Visualization
-    """
-    ## Results Visualization
-    Now we'll visualize the performance of the different recommenders.
-    """
-    
-    # Generate comparison plots
-    visualize_recommender_performance(results_df, recommender_names)
-    
-    # Generate detailed metrics visualizations
-    visualize_detailed_metrics(results_df, recommender_names)
-    
-    return results_df
-
-
-# Cell: Performance Visualization Functions
-"""
-## Performance Visualization Functions
-These functions create visualizations for comparing recommender performance.
-"""
+# %% [markdown]
+# ## Performance Visualization Functions
+# These functions create visualizations for comparing recommender performance.
 
 # %%
 def visualize_recommender_performance(results_df, recommender_names):
@@ -982,153 +802,136 @@ print("\n=== Starting Exploratory Data Analysis ===")
 
 print("Exploratory analysis complete.")
 
-# %% [markdown]
-# ## Set up Generators and Recommenders
-
-# %%
-# Prepare data generators for the simulator
 user_generator, item_generator = data_generator.setup_data_generators()
-from gradientBoost import GradientBoostRecommender
-from linearRegression import LinearRegressionRecommender
+# Define hyperparameter grid
+# Define search space for each parameter (start, end, step)
+# 1. Define the hyperparameter grid for GraphCNRecommender
 from graphCN import GraphCNRecommender
-# Initialize the recommenders we want to compare
-recommenders = [
-    # RandomRecommender(seed=config['data_generation']['seed']),
-    # PopularityRecommender(alpha=1.0, seed=config['data_generation']['seed']),
-    # # ContentBasedRecommender(similarity_threshold=0.0, seed=config['data_generation']['seed']),
-    # # # MyRecommender(seed=config['data_generation']['seed']),  # Custom template class
-    # # # LinearRegressionRecommender(seed=config['data_generation']['seed']),
-    # GradientBoostRecommender(seed=config['data_generation']['seed']),
-    GraphCNRecommender(seed=config['data_generation']['seed'])
-]
-recommender_names = [
-    # "Random",
-    # "Popularity",
-    # # "ContentBased",
-    # # "MyRecommender",
-    # # "LinearRegression",
-    # "GradientBoost",
-    "GraphCN"
-    ]
-# Fit each recommender on the initial history
-for recommender in recommenders:
-    recommender.fit(log=data_generator.history_df, user_features=data_generator.users_df, item_features=data_generator.items_df)
 
-print("Recommenders set up and initial fit complete.")
+param_ranges = {
+    'embedding_size': [32, 64, 128],  # Discrete values are better for embedding size
+    'num_layers': [2, 3, 4],          # Discrete values for layers
+    'epochs': [50, 100, 150],        # Discrete values for epochs
+    'learning_rate': (0.001, 0.01, 0.004), # Use a range (start, end, step)
+    'weight_decay': (1e-5, 1e-4, 4e-5),   # Use a range for regularization
+    'dropout': (0.0, 0.2, 0.1)            # Use a range for dropout
+}
 
-# %% [markdown]
-# ## Train-Test Simulation and Evaluation
+# 2. Start with initial parameters
+current_params = {
+    'embedding_size': 64,
+    'num_layers': 2,
+    'epochs': 50,
+    'learning_rate': 0.001,
+    'weight_decay': 9e-05,
+    'dropout': 0.1
+}
 
-# %%
-import pandas as pd
-
+best_revenue = -np.inf
+tolerance = 500  # Dollar threshold for improvement
+max_iterations = 10 # Limit total iterations to keep runtime reasonable
+improvement_achieved = True
 results = []
+iteration_count = 0
 
-for name, recommender in zip(recommender_names, recommenders):
-    print(f"\nEvaluating {name}:")
+while improvement_achieved and iteration_count < max_iterations:
+    iteration_count += 1
+    improvement_achieved = False
+    print(f"\n--- Starting Global Iteration {iteration_count} ---")
+    print(f"Current Best Revenue: ${best_revenue:.2f}")
+
+    for param, p_range in param_ranges.items():
+        # Handle both discrete lists and continuous ranges
+        if isinstance(p_range, list):
+            candidate_values = p_range
+        else:
+            start, end, step = p_range
+            candidate_values = np.arange(start, end + 1e-8, step)
+
+        best_local_revenue = -np.inf
+        best_local_value = current_params[param]
+
+        for value in candidate_values:
+            trial_params = current_params.copy()
+            # Ensure correct types for integer parameters
+            if param in ['embedding_size', 'num_layers', 'epochs']:
+                trial_params[param] = int(value)
+            else:
+                 trial_params[param] = round(value, 5) # Round floats
+
+            print(f"\nTesting {param} = {trial_params[param]}...")
+
+            # Clean simulator state for a fair run
+            simulator_data_dir = "simulator_cv_temp"
+            if os.path.exists(simulator_data_dir):
+                shutil.rmtree(simulator_data_dir)
+            
+            from pyspark.sql.types import LongType
+            history_df_casted = data_generator.history_df.withColumn(
+                "relevance", data_generator.history_df["relevance"].cast(LongType())
+            )
+
+            # 3. Instantiate the GraphCNRecommender
+            recommender = GraphCNRecommender(seed=42, **trial_params)
+            recommender.fit(
+                log=history_df_casted,
+                user_features=data_generator.users_df,
+                item_features=data_generator.items_df
+            )
+
+            # Initialize simulator
+            simulator = CompetitionSimulator(
+                user_generator=user_generator,
+                item_generator=item_generator,
+                log_df=history_df_casted, # Use original log
+                data_dir=simulator_data_dir,
+                conversion_noise_mean=DEFAULT_CONFIG['simulation']['conversion_noise_mean'],
+                conversion_noise_std=DEFAULT_CONFIG['simulation']['conversion_noise_std'],
+                spark_session=spark,
+                seed=42
+            )
+
+            # Run train-test simulation
+            _, _, _, test_revenue = simulator.train_test_split(
+                recommender=recommender,
+                train_iterations=DEFAULT_CONFIG['simulation']['train_iterations'],
+                test_iterations=DEFAULT_CONFIG['simulation']['test_iterations'],
+                user_frac=DEFAULT_CONFIG['simulation']['user_fraction'],
+                k=DEFAULT_CONFIG['simulation']['k'],
+                filter_seen_items=True,
+                retrain=False
+            )
+
+            total_revenue = np.sum(test_revenue)
+            print(f"--> Revenue for {param}={trial_params[param]}: ${total_revenue:.2f}")
+            results.append({**trial_params, 'total_test_revenue': total_revenue})
+
+            if total_revenue > best_local_revenue:
+                best_local_revenue = total_revenue
+                best_local_value = trial_params[param]
+
+        # Update global best parameters if a significant improvement was found
+        if best_local_revenue > best_revenue + tolerance:
+            print(f"\n*** Improvement found for {param}! ***")
+            print(f"Updating {param}: {current_params[param]} -> {best_local_value}")
+            print(f"Revenue increased from ${best_revenue:.2f} to ${best_local_revenue:.2f}")
+            current_params[param] = best_local_value
+            best_revenue = best_local_revenue
+            improvement_achieved = True
     
-    # Clean up any existing simulator data directory for this recommender
-    simulator_data_dir = f"simulator_train_test_data_{name}"
-    if os.path.exists(simulator_data_dir):
-        shutil.rmtree(simulator_data_dir)
-        print(f"Removed existing simulator data directory: {simulator_data_dir}")
-    
-    # Ensure 'relevance' column is LongType for compatibility
-    from pyspark.sql.types import LongType
-
-    history_df_casted = data_generator.history_df.withColumn(
-        "relevance", data_generator.history_df["relevance"].cast(LongType())
-    )
-
-    # Initialize simulator
-    simulator = CompetitionSimulator(
-        user_generator=user_generator,
-        item_generator=item_generator,
-        data_dir=simulator_data_dir,
-        log_df=history_df_casted,  # Use casted DataFrame
-        conversion_noise_mean=config['simulation']['conversion_noise_mean'],
-        conversion_noise_std=config['simulation']['conversion_noise_std'],
-        spark_session=spark,
-        seed=config['data_generation']['seed']
-    )
-    
-    # Run simulation with train-test split
-    train_metrics, test_metrics, train_revenue, test_revenue = simulator.train_test_split(
-        recommender=recommender,
-        train_iterations=train_iterations,
-        test_iterations=test_iterations,
-        user_frac=config['simulation']['user_fraction'],
-        k=config['simulation']['k'],
-        filter_seen_items=config['simulation']['filter_seen_items'],
-        retrain=config['simulation']['retrain']
-    )
-    
-    # Calculate average metrics
-    train_avg_metrics = {}
-    for metric_name in train_metrics[0].keys():
-        values = [m[metric_name] for m in train_metrics]
-        train_avg_metrics[f"train_{metric_name}"] = np.mean(values)
-    
-    test_avg_metrics = {}
-    for metric_name in test_metrics[0].keys():
-        values = [m[metric_name] for m in test_metrics]
-        test_avg_metrics[f"test_{metric_name}"] = np.mean(values)
-    
-    # Store results
-    results.append({
-        "name": name,
-        "train_total_revenue": sum(train_revenue),
-        "test_total_revenue": sum(test_revenue),
-        "train_avg_revenue": np.mean(train_revenue),
-        "test_avg_revenue": np.mean(test_revenue),
-        "train_metrics": train_metrics,
-        "test_metrics": test_metrics,
-        "train_revenue": train_revenue,
-        "test_revenue": test_revenue,
-        **train_avg_metrics,
-        **test_avg_metrics
-    })
-    
-    # Print summary for this recommender
-    print(f"  Training Phase - Total Revenue: {sum(train_revenue):.2f}")
-    print(f"  Testing Phase - Total Revenue: {sum(test_revenue):.2f}")
-    performance_change = ((sum(test_revenue) / len(test_revenue)) / (sum(train_revenue) / len(train_revenue)) - 1) * 100
-    print(f"  Performance Change: {performance_change:.2f}%")
-
-print("\n=== Simulation and evaluation complete for all recommenders. ===")
-
-# Convert to DataFrame for easy comparison
-results_df = pd.DataFrame(results)
-results_df = results_df.sort_values("test_total_revenue", ascending=False).reset_index(drop=True)
-
-# Print summary table
-print("\nRecommender Evaluation Results (sorted by test revenue):")
-summary_cols = [
-    "name", "train_total_revenue", "test_total_revenue", 
-    "train_avg_revenue", "test_avg_revenue",
-    "train_precision_at_k", "test_precision_at_k",
-    "train_ndcg_at_k", "test_ndcg_at_k",
-    "train_mrr", "test_mrr",
-    "train_discounted_revenue", "test_discounted_revenue"
-]
-summary_cols = [col for col in summary_cols if col in results_df.columns]
-
-if len(summary_cols) > 0:
-    print(results_df[summary_cols].to_string(index=False))
-else:
-    print("No summary columns to display.")
-
-# %% [markdown]
-# ## Results Visualization
-
-# %%
-# print("\n=== Visualizing Recommender Performance ===")
-visualize_recommender_performance(results_df, recommender_names)
-# visualize_detailed_metrics(results_df, recommender_names)
-
-# print("\nVisualization complete.")
-
-# %%
+    if not improvement_achieved:
+        print("\n--- No significant improvement found in last iteration. Halting search. ---")
 
 
+# --- Save and Print Final Results ---
+df_results = pd.DataFrame(results)
+df_results = df_results.sort_values(by='total_test_revenue', ascending=False)
+df_results.to_csv('gcn_adaptive_search_results.csv', index=False)
 
+print("\n==============================================")
+print("Hyperparameter search for GraphCNRecommender complete.")
+print("Best parameters found:")
+print(current_params)
+print(f"Best test revenue: ${best_revenue:.2f}")
+print("Full results saved to 'gcn_adaptive_search_results.csv'")
+print("==============================================")
