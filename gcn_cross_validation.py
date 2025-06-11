@@ -806,7 +806,7 @@ user_generator, item_generator = data_generator.setup_data_generators()
 # Define hyperparameter grid
 # Define search space for each parameter (start, end, step)
 # 1. Define the hyperparameter grid for GraphCNRecommender
-from graphCN import GraphCNRecommender
+from recommenders.checkpoint3.graphCN import GraphCNRecommender
 
 param_ranges = {
     'embedding_size': [32, 64, 128],  # Discrete values are better for embedding size
