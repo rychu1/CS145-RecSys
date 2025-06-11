@@ -8,6 +8,7 @@ __pycache__
 # Simulator artifacts
 *.png
 simulator_train_test_data_*
+simulator_cv_temp
 
 # macOS
 .DS_Store
