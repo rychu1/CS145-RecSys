@@ -82,7 +82,8 @@ def safe_evaluate_submission(submission_path, team_name):
             shutil.copy2(submission_path, temp_submission)
             
             # Copy evaluation script and dependencies to temp directory
-            shutil.copy2('evaluation.py', temp_dir)
+            if os.path.exists('evaluation.py'):
+                shutil.copy2('evaluation.py', temp_dir)
             
             # Copy other required files (assuming they exist in current directory)
             required_files = ['data_generator.py', 'simulator.py', 'config.py', 'sample_recommenders.py']
@@ -96,14 +97,20 @@ def safe_evaluate_submission(submission_path, team_name):
                 if os.path.exists(dir_name) and os.path.isdir(dir_name):
                     shutil.copytree(dir_name, os.path.join(temp_dir, dir_name))
             
+            # Use json.dumps to create a valid Python string literal for the path.
+            # This correctly escapes backslashes on Windows, making the path safe.
+            safe_temp_dir_path = json.dumps(temp_dir)
+
             # Create a modified evaluation script that returns results as JSON
             eval_script = f'''
 import sys
 import json
 import os
-sys.path.insert(0, "{temp_dir}")
 
-# Import the evaluation function
+# Insert the temporary directory into the Python path to resolve imports
+sys.path.insert(0, {safe_temp_dir_path})
+
+# Import the evaluation function from the copied script
 from evaluation import run_evaluation
 
 try:
@@ -143,36 +150,63 @@ except Exception as e:
             
             # Write the evaluation script
             eval_script_path = os.path.join(temp_dir, 'run_eval.py')
-            with open(eval_script_path, 'w') as f:
+            with open(eval_script_path, 'w', encoding='utf-8') as f:
                 f.write(eval_script)
+
+            # Create a copy of the current environment for the subprocess.
+            env = os.environ.copy()
+            # Set HOME for cross-platform compatibility (solves KeyError: 'HOME' on Windows).
+            env['HOME'] = os.path.expanduser('~')
+            # Set PYTHONIOENCODING to 'utf-8' to force the subprocess to use UTF-8
+            # for its standard streams, preventing UnicodeEncodeError on Windows.
+            env['PYTHONIOENCODING'] = 'utf-8'
             
-            # Run the evaluation with timeout
+            # Run the evaluation with timeout, specifying UTF-8 encoding to prevent errors.
             result = subprocess.run(
                 [sys.executable, eval_script_path],
                 cwd=temp_dir,
                 capture_output=True,
                 text=True,
-                timeout=600  # 10 minute timeout
+                timeout=600,  # 10 minute timeout
+                env=env, # Pass the modified environment
+                encoding='utf-8', # Ensure output is decoded as UTF-8
+                errors='ignore' # Ignore any characters that can't be decoded
             )
             
             if result.returncode == 0:
                 # Parse the JSON output
                 try:
-                    output = json.loads(result.stdout.strip().split('\n')[-1])  # Get last line which should be JSON
-                    return output
+                    # Iterate through the output lines in reverse to find the last valid JSON object.
+                    lines = result.stdout.strip().split('\n')
+                    for line in reversed(lines):
+                        line = line.strip()
+                        # A simple heuristic to identify a potential JSON object string
+                        if line.startswith('{') and line.endswith('}'):
+                            try:
+                                output = json.loads(line)
+                                # Successfully parsed a JSON object, return it.
+                                return output
+                            except json.JSONDecodeError:
+                                # This line looked like JSON but failed to parse,
+                                # so we continue to the next line.
+                                continue
+                    
+                    # If we went through all lines and found no valid JSON.
+                    raise json.JSONDecodeError("No valid JSON object found in output lines.", result.stdout, 0)
+
                 except json.JSONDecodeError:
                     return {
                         "status": "error",
                         "team_name": team_name,
-                        "error_message": f"Failed to parse evaluation output: {result.stdout[-500:]}"
+                        "error_message": f"Failed to parse evaluation output. Stdout: {result.stdout[-500:]}"
                     }
             else:
                 return {
                     "status": "error",
                     "team_name": team_name,
-                    "error_message": f"Evaluation failed with return code {result.returncode}: {result.stderr[-500:]}"
+                    "error_message": f"Evaluation failed with return code {result.returncode}. Stderr: {result.stderr[-500:]}"
                 }
-                
+            
     except subprocess.TimeoutExpired:
         return {
             "status": "error",
@@ -183,7 +217,7 @@ except Exception as e:
         return {
             "status": "error",
             "team_name": team_name,
-            "error_message": f"Unexpected error: {str(e)}",
+            "error_message": f"Unexpected error during evaluation setup: {str(e)}",
             "traceback": traceback.format_exc()
         }
 
@@ -250,7 +284,7 @@ def upload_file():
     """Handle file upload and evaluation."""
     if 'file' not in request.files:
         flash('No file selected')
-        return redirect(request.url)
+        return redirect(url_for('index'))
     
     file = request.files['file']
     team_name = request.form.get('team_name', '').strip()
@@ -288,10 +322,10 @@ def upload_file():
                 flash(f'Evaluation completed successfully! Test Discounted Revenue: {results.get("test_discounted_revenue", 0.0):.4f}')
             else:
                 flash(f'Evaluation failed: {results.get("error_message", "Unknown error")}')
-                
+                    
         except Exception as e:
             flash(f'Error during evaluation: {str(e)}')
-        
+            
         return redirect(url_for('index'))
     else:
         flash('Invalid file type. Please upload a .py file.')
@@ -301,6 +335,7 @@ def upload_file():
 def leaderboard():
     """Display the leaderboard."""
     conn = sqlite3.connect(DATABASE)
+    conn.row_factory = sqlite3.Row # Allows accessing columns by name
     cursor = conn.cursor()
     
     cursor.execute('''
@@ -322,6 +357,7 @@ def leaderboard():
 def api_leaderboard():
     """API endpoint for leaderboard data."""
     conn = sqlite3.connect(DATABASE)
+    conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     
     cursor.execute('''
@@ -336,17 +372,9 @@ def api_leaderboard():
     results = cursor.fetchall()
     conn.close()
     
-    leaderboard_data = []
-    for i, row in enumerate(results):
-        leaderboard_data.append({
-            'rank': i + 1,
-            'team_name': row[0],
-            'test_discounted_revenue': row[1],
-            'test_total_revenue': row[2],
-            'test_avg_revenue': row[3],
-            'submission_time': row[4],
-            'status': row[5]
-        })
+    leaderboard_data = [dict(row) for row in results]
+    for i, row in enumerate(leaderboard_data):
+        row['rank'] = i + 1
     
     return jsonify(leaderboard_data)
 
@@ -354,6 +382,7 @@ def api_leaderboard():
 def admin():
     """Admin page to view all submissions including errors."""
     conn = sqlite3.connect(DATABASE)
+    conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     
     cursor.execute('''
@@ -370,4 +399,4 @@ def admin():
 
 if __name__ == '__main__':
     init_database()
-    app.run(debug=True, host='0.0.0.0', port=5431) 
+    app.run(debug=True, host='0.0.0.0', port=5431)

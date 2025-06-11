@@ -9,7 +9,15 @@ from pyspark.sql import DataFrame, Window
 from pyspark.ml.feature import VectorAssembler
 from pyspark.ml.linalg import Vectors, VectorUDT
 from pyspark.sql.types import DoubleType, ArrayType
-
+# Fix for KeyError: 'HOME' on Windows
+if 'HOME' not in os.environ:
+    os.environ['HOME'] = os.path.expanduser("~")
+if 'HADOOP_HOME' not in os.environ:
+    #need to be c://hadoop on Windows
+    os.environ['HADOOP_HOME'] = "C:\\hadoop"
+# Set both driver and worker to use the current Python executable (should be 3.11)
+os.environ["PYSPARK_PYTHON"] = sys.executable
+os.environ["PYSPARK_DRIVER_PYTHON"] = sys.executable
 # Initialize Spark session
 spark = SparkSession.builder \
     .appName("RecSysEvaluation") \
@@ -72,9 +80,14 @@ def run_evaluation():
     
     # Initialize MyRecommender
     recommender = MyRecommender(seed=42)
-    
+    # Ensure 'relevance' column is LongType for compatibility
+    from pyspark.sql.types import LongType
+
+    history_df_casted = data_generator.history_df.withColumn(
+        "relevance", data_generator.history_df["relevance"].cast(LongType())
+    )
     # Initialize recommender with initial history
-    recommender.fit(log=data_generator.history_df, 
+    recommender.fit(log=history_df_casted, 
                     user_features=users_df, 
                     item_features=items_df)
     
@@ -91,7 +104,7 @@ def run_evaluation():
         user_generator=user_generator,
         item_generator=item_generator,
         data_dir=simulator_data_dir,
-        log_df=data_generator.history_df,
+        log_df=history_df_casted,
         conversion_noise_mean=config['simulation']['conversion_noise_mean'],
         conversion_noise_std=config['simulation']['conversion_noise_std'],
         spark_session=spark,
