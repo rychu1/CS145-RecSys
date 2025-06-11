@@ -988,27 +988,38 @@ print("Exploratory analysis complete.")
 # %%
 # Prepare data generators for the simulator
 user_generator, item_generator = data_generator.setup_data_generators()
-from gradientBoost import GradientBoostRecommender
-from linearRegression import LinearRegressionRecommender
-from graphCN import GraphCNRecommender
+from recommenders.checkpoint1.gradientBoost import GradientBoostRecommender
+from recommenders.checkpoint1.linearRegression import LinearRegressionRecommender
+from recommenders.checkpoint1.KNN import KNNRecommender
+from recommenders.checkpoint1.logistic_regression import LogRegModel
+from recommenders.checkpoint2.sequential_reccomenders import RNNRecommender,LSTMRecommender,TransformerRecommender
+from recommenders.checkpoint3.graphCN import GraphCNRecommender
 # Initialize the recommenders we want to compare
 recommenders = [
-    # RandomRecommender(seed=config['data_generation']['seed']),
-    # PopularityRecommender(alpha=1.0, seed=config['data_generation']['seed']),
-    # # ContentBasedRecommender(similarity_threshold=0.0, seed=config['data_generation']['seed']),
-    # # # MyRecommender(seed=config['data_generation']['seed']),  # Custom template class
-    # # # LinearRegressionRecommender(seed=config['data_generation']['seed']),
-    # GradientBoostRecommender(seed=config['data_generation']['seed']),
-    GraphCNRecommender(seed=config['data_generation']['seed'])
+    RandomRecommender(seed=config['data_generation']['seed']),
+    PopularityRecommender(alpha=1.0, seed=config['data_generation']['seed']),
+    ContentBasedRecommender(similarity_threshold=0.0, seed=config['data_generation']['seed']),
+    LinearRegressionRecommender(seed=config['data_generation']['seed']),
+    GradientBoostRecommender(seed=config['data_generation']['seed']),
+    GraphCNRecommender(seed=config['data_generation']['seed']),
+    KNNRecommender( seed=config['data_generation']['seed']),
+    RNNRecommender(seed=config['data_generation']['seed']),
+    LSTMRecommender(seed=config['data_generation']['seed']),
+    TransformerRecommender(seed=config['data_generation']['seed']),
+    LogRegModel(seed=config['data_generation']['seed'])
 ]
 recommender_names = [
-    # "Random",
-    # "Popularity",
-    # # "ContentBased",
-    # # "MyRecommender",
-    # # "LinearRegression",
-    # "GradientBoost",
-    "GraphCN"
+    "Random",
+    "Popularity",
+    "ContentBased",
+    "LinearRegression",
+    "GradientBoost",
+    "GraphCN",
+    "KNN",
+    "RNN",
+    "LSTM",
+    "Transformer",
+    "LogisticRegression"
     ]
 # Fit each recommender on the initial history
 for recommender in recommenders:
