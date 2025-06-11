@@ -990,22 +990,25 @@ print("Exploratory analysis complete.")
 user_generator, item_generator = data_generator.setup_data_generators()
 from gradientBoost import GradientBoostRecommender
 from linearRegression import LinearRegressionRecommender
+from graphCN import GraphCNRecommender
 # Initialize the recommenders we want to compare
 recommenders = [
-    RandomRecommender(seed=config['data_generation']['seed']),
-    PopularityRecommender(alpha=1.0, seed=config['data_generation']['seed']),
-    ContentBasedRecommender(similarity_threshold=0.0, seed=config['data_generation']['seed']),
-    # MyRecommender(seed=config['data_generation']['seed']),  # Custom template class
-    # LinearRegressionRecommender(seed=config['data_generation']['seed']),
-    GradientBoostRecommender(seed=config['data_generation']['seed']),
+    # RandomRecommender(seed=config['data_generation']['seed']),
+    # PopularityRecommender(alpha=1.0, seed=config['data_generation']['seed']),
+    # # ContentBasedRecommender(similarity_threshold=0.0, seed=config['data_generation']['seed']),
+    # # # MyRecommender(seed=config['data_generation']['seed']),  # Custom template class
+    # # # LinearRegressionRecommender(seed=config['data_generation']['seed']),
+    # GradientBoostRecommender(seed=config['data_generation']['seed']),
+    GraphCNRecommender(seed=config['data_generation']['seed'])
 ]
 recommender_names = [
-    "Random",
-    "Popularity",
-    "ContentBased",
-    # "MyRecommender",
-    # "LinearRegression",
-    "GradientBoost"
+    # "Random",
+    # "Popularity",
+    # # "ContentBased",
+    # # "MyRecommender",
+    # # "LinearRegression",
+    # "GradientBoost",
+    "GraphCN"
     ]
 # Fit each recommender on the initial history
 for recommender in recommenders:
@@ -1119,11 +1122,11 @@ else:
 # ## Results Visualization
 
 # %%
-print("\n=== Visualizing Recommender Performance ===")
-visualize_recommender_performance(results_df, recommender_names)
-visualize_detailed_metrics(results_df, recommender_names)
+# print("\n=== Visualizing Recommender Performance ===")
+# visualize_recommender_performance(results_df, recommender_names)
+# visualize_detailed_metrics(results_df, recommender_names)
 
-print("\nVisualization complete.")
+# print("\nVisualization complete.")
 
 # %%
 
