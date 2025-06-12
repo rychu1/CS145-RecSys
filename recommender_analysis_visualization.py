@@ -994,32 +994,35 @@ from recommenders.checkpoint1.KNN import KNNRecommender
 from recommenders.checkpoint1.logistic_regression import LogRegModel
 from recommenders.checkpoint2.sequential_reccomenders import RNNRecommender,LSTMRecommender,TransformerRecommender
 from recommenders.checkpoint3.graphCN import GraphCNRecommender
+from recommenders.checkpoint3.LightGCN import LightGCNRecommender
 # Initialize the recommenders we want to compare
 recommenders = [
-    RandomRecommender(seed=config['data_generation']['seed']),
-    PopularityRecommender(alpha=1.0, seed=config['data_generation']['seed']),
-    ContentBasedRecommender(similarity_threshold=0.0, seed=config['data_generation']['seed']),
-    LinearRegressionRecommender(seed=config['data_generation']['seed']),
-    GradientBoostRecommender(seed=config['data_generation']['seed']),
+    # RandomRecommender(seed=config['data_generation']['seed']),
+    # PopularityRecommender(alpha=1.0, seed=config['data_generation']['seed']),
+    # ContentBasedRecommender(similarity_threshold=0.0, seed=config['data_generation']['seed']),
+    # LinearRegressionRecommender(seed=config['data_generation']['seed']),
+    # GradientBoostRecommender(seed=config['data_generation']['seed']),
     GraphCNRecommender(seed=config['data_generation']['seed']),
-    KNNRecommender( seed=config['data_generation']['seed']),
-    RNNRecommender(seed=config['data_generation']['seed']),
-    LSTMRecommender(seed=config['data_generation']['seed']),
-    TransformerRecommender(seed=config['data_generation']['seed']),
-    LogRegModel(seed=config['data_generation']['seed'])
+    LightGCNRecommender(seed=config['data_generation']['seed']),
+    # KNNRecommender( seed=config['data_generation']['seed']),
+    # RNNRecommender(seed=config['data_generation']['seed']),
+    # LSTMRecommender(seed=config['data_generation']['seed']),
+    # TransformerRecommender(seed=config['data_generation']['seed']),
+    # LogRegModel(seed=config['data_generation']['seed'])
 ]
 recommender_names = [
-    "Random",
-    "Popularity",
-    "ContentBased",
-    "LinearRegression",
-    "GradientBoost",
+    # "Random",
+    # "Popularity",
+    # "ContentBased",
+    # "LinearRegression",
+    # "GradientBoost",
     "GraphCN",
-    "KNN",
-    "RNN",
-    "LSTM",
-    "Transformer",
-    "LogisticRegression"
+    "LightGCN",
+    # "KNN",
+    # "RNN",
+    # "LSTM",
+    # "Transformer",
+    # "LogisticRegression"
     ]
 # Fit each recommender on the initial history
 for recommender in recommenders:

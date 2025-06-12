@@ -215,7 +215,7 @@ class LightGCNModel(nn.Module):
         src, dst = z[edge_label_index[0]], z[edge_label_index[1]]
         return (src * dst).sum(dim=-1)
 
-class MyRecommender(GraphCNRecommender):
+class LightGCNRecommender(GraphCNRecommender):
     """
     Recommender implementation using the LightGCNModel. It inherits most of its
     functionality from GraphCNRecommender but uses the specialized LightGCN architecture.
