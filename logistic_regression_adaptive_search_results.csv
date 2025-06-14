@@ -1,4 +1,3 @@
-@ -0,0 +1,29 @@
 penalty,C,solver,max_iter,tol,total_test_revenue
 l2,10.0,liblinear,500,1e-05,10159.362278261435
 l2,10.0,liblinear,1000,1e-05,10150.648848470508
