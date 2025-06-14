@@ -15,24 +15,32 @@ from pyspark.sql.types import LongType
 
 class LogRegModel(BaseRecommender):
     """
-    Custom recommender based on a scikit-learn Losgistic Regression model.
+    Custom recommender based on a scikit-learn Linear Regression model.
     Fits using only numeric features, without scaling or categorical encoding.
     """
-    def __init__(self, seed=None):
+    def __init__(self, seed=None,
+                penalty = 'l2',
+                C = 10,
+                solver = 'saga',
+                max_iter = 1000,
+                tol = 1e-5):
         super().__init__(seed)
-        self.model = LogisticRegression(max_iter = 1000, penalty = 'l1', solver = 'liblinear', C = 0.1)
+        
+        
+        self.model = LogisticRegression(max_iter = 1000, penalty = penalty, solver = solver, C = C, tol = tol)
         self.scaler = StandardScaler()
         self.numerical_features = [] # Will store the names of numerical features used for fitting
         self.categorical_features = [] # Will store the names of categorical features used for fitting
 
     def fit(self, log: DataFrame, user_features: Optional[DataFrame] = None, item_features: Optional[DataFrame] = None):
         """
-        Trains the scikit-learn Logistic Regression model using only numeric features.
+        Trains the scikit-learn Linear Regression model using only numeric features.
         Data is converted to Pandas for preprocessing and training.
         """
         if user_features is None or item_features is None:
-            raise ValueError("User and item features are required for a content-based logistic regression recommender.")
+            raise ValueError("User and item features are required for a content-based linear regression recommender.")
 
+        # print("Starting scikit-learn Linear Regression model training (numeric features only)...")
 
         # Join Spark DataFrames and convert to Pandas for processing
         training_data_pd = log.join(user_features, on='user_idx', how='inner') \
@@ -119,14 +127,12 @@ class LogRegModel(BaseRecommender):
         top_k_recommendations_pd = prediction_data_pd.groupby('user_idx').head(k)
 
         # Select only the required columns (user_idx, item_idx, relevance) and convert back to Spark DataFrame
-        final_recs_pd = top_k_recommendations_pd[['user_idx', 'item_idx', 'relevance']]
+        recs_spark = pandas_to_spark(top_k_recommendations_pd[['user_idx', 'item_idx', 'relevance']])
         
-        recs_spark = pandas_to_spark(final_recs_pd)
-        
-        recs_spark = recs_spark.withColumn("user_idx", sf.col("user_idx").cast("int")) \
-                               .withColumn("item_idx", sf.col("item_idx").cast("int")) \
+        # Ensure correct types for the final Spark DataFrame
+        recs_spark = recs_spark.withColumn("user_idx", sf.col("user_idx").cast(LongType())) \
+                               .withColumn("item_idx", sf.col("item_idx").cast(LongType())) \
                                .withColumn("relevance", sf.col("relevance").cast("double"))
-
 
         # print("Recommendations generated.")
         return recs_spark
