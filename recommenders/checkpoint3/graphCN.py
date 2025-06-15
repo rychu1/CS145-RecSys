@@ -18,7 +18,7 @@ from sample_recommenders import BaseRecommender
 
 # This dictionary holds the best parameters found from your hyperparameter tuning script.
 # It's used to set the default values for the recommender.
-current_params = {'embedding_size': 64, 'num_layers': 2, 'epochs': 50, 'learning_rate': 0.001, 'weight_decay': 9e-05, 'dropout': 0.1}
+current_params = {'embedding_size': 64, 'num_layers': 2, 'epochs': 500, 'learning_rate': 0.001, 'weight_decay': 9e-05, 'dropout': 0.1}
 
 # --- 2. GCN Model (Internal PyTorch Module) ---
 class GCNModel(nn.Module):
@@ -265,6 +265,7 @@ class GraphCNRecommender(BaseRecommender):
         all_pairs["user_map_idx"] = all_pairs["user_idx"].map(self.user_mapping)
         all_pairs["item_map_idx"] = all_pairs["item_idx"].map(self.item_mapping)
         all_pairs.dropna(subset=["user_map_idx", "item_map_idx"], inplace=True)
+        # Ensure mapped indices are integers before passing to torch
         all_pairs = all_pairs.astype({"user_map_idx": int, "item_map_idx": int})
 
         # --- Scoring ---
@@ -283,24 +284,30 @@ class GraphCNRecommender(BaseRecommender):
         # --- Ranking ---
         # Calculate final relevance, potentially weighting by price.
         if self.price_weighting:
+            # Create a price lookup map from the item features
             price_lookup = self.item_features_pd.set_index("item_idx")["price"]
             all_pairs["price"] = all_pairs["item_idx"].map(price_lookup)
-            all_pairs["relevance"] = all_pairs["score"] * all_pairs["price"].fillna(1.0)
+            # Ensure price is float and fill NaNs for calculation
+            all_pairs["relevance"] = all_pairs["score"] * all_pairs["price"].fillna(1.0).astype(float)
         else:
             all_pairs["relevance"] = all_pairs["score"]
 
         # Get the top K recommendations for each user.
         all_pairs.sort_values(["user_idx", "relevance"], ascending=[True, False], inplace=True)
         top_k = all_pairs.groupby("user_idx").head(k)
-        final_recs_pd = top_k[['user_idx', 'item_idx', 'relevance']]
+        # Select final columns and ensure user/item IDs are 64-bit integers in pandas
+        final_recs_pd = top_k[['user_idx', 'item_idx', 'relevance']].astype({
+            'user_idx': np.int64,
+            'item_idx': np.int64
+        })
 
         # --- Formatting for Submission ---
         # Convert the pandas DataFrame back to a Spark DataFrame.
         recs_spark = self.spark.createDataFrame(final_recs_pd)
         # Ensure the output schema has the correct data types.
-        recs_spark = recs_spark.withColumn("user_idx", sf.col("user_idx").cast("int")) \
-                               .withColumn("item_idx", sf.col("item_idx").cast("int")) \
-                               .withColumn("relevance", sf.col("relevance").cast("double"))
+        # np.int64 in pandas correctly maps to LongType in Spark.
+        # We explicitly cast relevance to DoubleType for safety.
+        recs_spark = recs_spark.withColumn("relevance", sf.col("relevance").cast("double"))
 
         print("--- [GraphCN] Prediction complete, returning results ---")
         return recs_spark

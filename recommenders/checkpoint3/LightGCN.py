@@ -157,11 +157,22 @@ class GraphCNRecommender(BaseRecommender):
         else:
             all_pairs["relevance"] = all_pairs["score"]
         all_pairs.sort_values(["user_idx", "relevance"], ascending=[True, False], inplace=True)
-        top_k = all_pairs.groupby("user_idx").head(k)[['user_idx', 'item_idx', 'relevance']]
-        recs_spark = self.spark.createDataFrame(top_k)
-        recs_spark = recs_spark.withColumn("user_idx", sf.col("user_idx").cast("int")).withColumn("item_idx", sf.col("item_idx").cast("int")).withColumn("relevance", sf.col("relevance").cast("double"))
+        top_k = all_pairs.groupby("user_idx").head(k)
+        # Select final columns and ensure user/item IDs are 64-bit integers in pandas
+        final_recs_pd = top_k[['user_idx', 'item_idx', 'relevance']].astype({
+            'user_idx': np.int64,
+            'item_idx': np.int64
+        })
+
+        # --- Formatting for Submission ---
+        # Convert the pandas DataFrame back to a Spark DataFrame.
+        recs_spark = self.spark.createDataFrame(final_recs_pd)
+        # Ensure the output schema has the correct data types.
+        # np.int64 in pandas correctly maps to LongType in Spark.
+        # We explicitly cast relevance to DoubleType for safety.
+        recs_spark = recs_spark.withColumn("relevance", sf.col("relevance").cast("double"))
         print("--- [GCN] Prediction complete ---")
-        return recs_spark
+        return recs_spark 
 
 # =========================================================================================
 # === Model 2: LightGCN ===================================================================

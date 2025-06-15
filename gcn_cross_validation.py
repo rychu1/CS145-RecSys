@@ -23,7 +23,6 @@ from pyspark.sql import DataFrame, Window
 from pyspark.ml.feature import VectorAssembler
 from pyspark.ml.linalg import Vectors, VectorUDT
 from pyspark.sql.types import DoubleType, ArrayType, Optional
-from gradientBoost import GradientBoostRecommender
 
 # Set up plotting
 plt.style.use('seaborn-v0_8-whitegrid')
@@ -806,48 +805,50 @@ user_generator, item_generator = data_generator.setup_data_generators()
 # Define hyperparameter grid
 # Define search space for each parameter (start, end, step)
 # 1. Define the hyperparameter grid for GraphCNRecommender
+# 1. Define the hyperparameter grid for GraphCNRecommender
 from recommenders.checkpoint3.graphCN import GraphCNRecommender
 
 param_ranges = {
-    'embedding_size': [32, 64, 128],  # Discrete values are better for embedding size
-    'num_layers': [2, 3, 4],          # Discrete values for layers
-    'epochs': [50, 100, 150],        # Discrete values for epochs
-    'learning_rate': (0.001, 0.01, 0.004), # Use a range (start, end, step)
-    'weight_decay': (1e-5, 1e-4, 4e-5),   # Use a range for regularization
-    'dropout': (0.0, 0.2, 0.1)            # Use a range for dropout
+    'embedding_size': [32, 64, 128],      # Discrete values
+    'num_layers': [2, 3, 4],              # Discrete values
+    'epochs': [50, 100, 150],            # Discrete values
+    'learning_rate': np.arange(0.001, 0.01, 0.004),
+    'weight_decay': np.arange(1e-5, 1e-4, 4e-5),
+    'dropout': np.arange(0.0, 0.3, 0.1)
 }
 
-# 2. Start with initial parameters
+# 2. Start with a poor initial guess for parameters
 current_params = {
-    'embedding_size': 64,
-    'num_layers': 2,
+    'embedding_size': 32,
+    'num_layers': 4,
     'epochs': 50,
-    'learning_rate': 0.001,
-    'weight_decay': 9e-05,
-    'dropout': 0.1
+    'learning_rate': 0.01,
+    'weight_decay': 1e-4,
+    'dropout': 0.2
 }
 
+# 3. Set the requested tolerance and max iterations
 best_revenue = -np.inf
-tolerance = 500  # Dollar threshold for improvement
-max_iterations = 10 # Limit total iterations to keep runtime reasonable
-improvement_achieved = True
-results = []
+tolerance = 1000  # Dollar threshold for significant improvement
+max_iterations = 5 # Limit total global iterations
+
+# 4. Add improved tracking
+all_trial_results = []
+best_revenue_history = []
 iteration_count = 0
+improvement_achieved = True
 
 while improvement_achieved and iteration_count < max_iterations:
     iteration_count += 1
     improvement_achieved = False
-    print(f"\n--- Starting Global Iteration {iteration_count} ---")
-    print(f"Current Best Revenue: ${best_revenue:.2f}")
+    print(f"\n{'='*20} Global Iteration: {iteration_count}/{max_iterations} {'='*20}")
+    print(f"Starting Revenue for this iteration: ${best_revenue:.2f}")
+    print(f"Starting Parameters: {current_params}")
+    
+    # Store the revenue from the start of the iteration
+    revenue_at_iteration_start = best_revenue
 
-    for param, p_range in param_ranges.items():
-        # Handle both discrete lists and continuous ranges
-        if isinstance(p_range, list):
-            candidate_values = p_range
-        else:
-            start, end, step = p_range
-            candidate_values = np.arange(start, end + 1e-8, step)
-
+    for param, candidate_values in param_ranges.items():
         best_local_revenue = -np.inf
         best_local_value = current_params[param]
 
@@ -857,21 +858,25 @@ while improvement_achieved and iteration_count < max_iterations:
             if param in ['embedding_size', 'num_layers', 'epochs']:
                 trial_params[param] = int(value)
             else:
-                 trial_params[param] = round(value, 5) # Round floats
+                 trial_params[param] = round(value, 5)
 
-            print(f"\nTesting {param} = {trial_params[param]}...")
+            # Skip if this combination has already been tried for the current parameter
+            if trial_params[param] == current_params[param] and iteration_count > 1:
+                continue
+
+            print(f"\n--> Testing {param} = {trial_params[param]}...")
 
             # Clean simulator state for a fair run
             simulator_data_dir = "simulator_cv_temp"
             if os.path.exists(simulator_data_dir):
                 shutil.rmtree(simulator_data_dir)
-            
+
             from pyspark.sql.types import LongType
             history_df_casted = data_generator.history_df.withColumn(
                 "relevance", data_generator.history_df["relevance"].cast(LongType())
             )
 
-            # 3. Instantiate the GraphCNRecommender
+            # Instantiate and fit the recommender
             recommender = GraphCNRecommender(seed=42, **trial_params)
             recommender.fit(
                 log=history_df_casted,
@@ -883,55 +888,55 @@ while improvement_achieved and iteration_count < max_iterations:
             simulator = CompetitionSimulator(
                 user_generator=user_generator,
                 item_generator=item_generator,
-                log_df=history_df_casted, # Use original log
+                log_df=history_df_casted,
                 data_dir=simulator_data_dir,
-                conversion_noise_mean=DEFAULT_CONFIG['simulation']['conversion_noise_mean'],
-                conversion_noise_std=DEFAULT_CONFIG['simulation']['conversion_noise_std'],
                 spark_session=spark,
                 seed=42
             )
 
             # Run train-test simulation
-            _, _, _, test_revenue = simulator.train_test_split(
+            _, _, _, test_revenue_list = simulator.train_test_split(
                 recommender=recommender,
                 train_iterations=DEFAULT_CONFIG['simulation']['train_iterations'],
                 test_iterations=DEFAULT_CONFIG['simulation']['test_iterations'],
-                user_frac=DEFAULT_CONFIG['simulation']['user_fraction'],
                 k=DEFAULT_CONFIG['simulation']['k'],
-                filter_seen_items=True,
                 retrain=False
             )
 
-            total_revenue = np.sum(test_revenue)
-            print(f"--> Revenue for {param}={trial_params[param]}: ${total_revenue:.2f}")
-            results.append({**trial_params, 'total_test_revenue': total_revenue})
+            total_revenue = np.sum(test_revenue_list)
+            print(f"    Revenue: ${total_revenue:.2f}")
+            all_trial_results.append({**trial_params, 'total_test_revenue': total_revenue})
 
             if total_revenue > best_local_revenue:
                 best_local_revenue = total_revenue
                 best_local_value = trial_params[param]
 
         # Update global best parameters if a significant improvement was found
-        if best_local_revenue > best_revenue + tolerance:
-            print(f"\n*** Improvement found for {param}! ***")
-            print(f"Updating {param}: {current_params[param]} -> {best_local_value}")
-            print(f"Revenue increased from ${best_revenue:.2f} to ${best_local_revenue:.2f}")
+        # Compare to the best revenue from the START of the global iteration
+        if best_local_revenue > revenue_at_iteration_start + tolerance:
+            print(f"\n*** SIGNIFICANT IMPROVEMENT FOR '{param}' FOUND! ***")
+            print(f"    New best value: {best_local_value} (Revenue: ${best_local_revenue:.2f})")
+            print(f"    Updating {param}: {current_params[param]} -> {best_local_value}")
+            
             current_params[param] = best_local_value
             best_revenue = best_local_revenue
             improvement_achieved = True
     
+    best_revenue_history.append(best_revenue)
     if not improvement_achieved:
-        print("\n--- No significant improvement found in last iteration. Halting search. ---")
+        print("\n--- No significant improvement found in last global iteration. Halting search. ---")
 
 
 # --- Save and Print Final Results ---
-df_results = pd.DataFrame(results)
+df_results = pd.DataFrame(all_trial_results)
 df_results = df_results.sort_values(by='total_test_revenue', ascending=False)
 df_results.to_csv('gcn_adaptive_search_results.csv', index=False)
 
 print("\n==============================================")
 print("Hyperparameter search for GraphCNRecommender complete.")
-print("Best parameters found:")
+print("\nBest parameters found:")
 print(current_params)
-print(f"Best test revenue: ${best_revenue:.2f}")
-print("Full results saved to 'gcn_adaptive_search_results.csv'")
+print(f"\nBest test revenue achieved: ${best_revenue:.2f}")
+print(f"\nHistory of best revenue per iteration: {[f'${rev:.2f}' for rev in best_revenue_history]}")
+print("\nFull results for all trials saved to 'gcn_adaptive_search_results.csv'")
 print("==============================================")

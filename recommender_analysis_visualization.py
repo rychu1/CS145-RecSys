@@ -29,16 +29,21 @@ plt.style.use('seaborn-v0_8-whitegrid')
 sns.set_style('whitegrid')
 plt.rcParams['figure.figsize'] = (14, 8)
 
-
-# Fix for KeyError: 'HOME' on Windows
-if 'HOME' not in os.environ:
-    os.environ['HOME'] = os.path.expanduser("~")
-if 'HADOOP_HOME' not in os.environ:
-    #need to be c://hadoop on Windows
-    os.environ['HADOOP_HOME'] = "C:\\hadoop"
+if os.name == 'nt':
+    # Fix for KeyError: 'HOME' on Windows
+    if 'HOME' not in os.environ:
+        os.environ['HOME'] = os.path.expanduser("~")
+    if 'HADOOP_HOME' not in os.environ:
+        #need to be c://hadoop on Windows
+        os.environ['HADOOP_HOME'] = "C:\\hadoop"
 # Set both driver and worker to use the current Python executable (should be 3.11)
 os.environ["PYSPARK_PYTHON"] = sys.executable
 os.environ["PYSPARK_DRIVER_PYTHON"] = sys.executable
+import getpass # To automatically get the current user's name
+
+# Set the HADOOP_USER_NAME environment variable
+# This must be done BEFORE the SparkSession is created
+os.environ['HADOOP_USER_NAME'] = getpass.getuser()
 
 # %% [markdown]
 # ## Initialize Spark session
@@ -995,34 +1000,43 @@ from recommenders.checkpoint1.logistic_regression import LogRegModel
 from recommenders.checkpoint2.sequential_reccomenders import RNNRecommender,LSTMRecommender,TransformerRecommender
 from recommenders.checkpoint3.graphCN import GraphCNRecommender
 from recommenders.checkpoint3.LightGCN import LightGCNRecommender
+from recommenders.checkpoint3.tower import TwoTowerRecommender
+from recommenders.checkpoint3.lstm import MyLSTMRecommender
+from recommenders.hybrid import HybridRecommender
 # Initialize the recommenders we want to compare
 recommenders = [
-    # RandomRecommender(seed=config['data_generation']['seed']),
+    RandomRecommender(seed=config['data_generation']['seed']),
     # PopularityRecommender(alpha=1.0, seed=config['data_generation']['seed']),
     # ContentBasedRecommender(similarity_threshold=0.0, seed=config['data_generation']['seed']),
     # LinearRegressionRecommender(seed=config['data_generation']['seed']),
-    # GradientBoostRecommender(seed=config['data_generation']['seed']),
-    GraphCNRecommender(seed=config['data_generation']['seed']),
-    LightGCNRecommender(seed=config['data_generation']['seed']),
-    # KNNRecommender( seed=config['data_generation']['seed']),
+    GradientBoostRecommender(seed=config['data_generation']['seed']),
+    # GraphCNRecommender(seed=config['data_generation']['seed']),
+    # LightGCNRecommender(seed=config['data_generation']['seed']),
+    KNNRecommender( seed=config['data_generation']['seed']),
     # RNNRecommender(seed=config['data_generation']['seed']),
     # LSTMRecommender(seed=config['data_generation']['seed']),
     # TransformerRecommender(seed=config['data_generation']['seed']),
-    # LogRegModel(seed=config['data_generation']['seed'])
+    LogRegModel(seed=config['data_generation']['seed']),
+    # TwoTowerRecommender(seed=config['data_generation']['seed']),
+    # MyLSTMRecommender(seed=config['data_generation']['seed']),
+    # HybridRecommender(seed=config['data_generation']['seed']),
 ]
 recommender_names = [
-    # "Random",
+    "Random",
     # "Popularity",
     # "ContentBased",
     # "LinearRegression",
     # "GradientBoost",
-    "GraphCN",
-    "LightGCN",
+    # "GraphCN",
+    # "LightGCN",
     # "KNN",
     # "RNN",
     # "LSTM",
     # "Transformer",
-    # "LogisticRegression"
+    # "LogisticRegression",
+    # "TwoTower",
+    # "MyLSTM",
+    # "Hybrid"
     ]
 # Fit each recommender on the initial history
 for recommender in recommenders:
