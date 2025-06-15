@@ -13,14 +13,22 @@ from sample_recommenders import BaseRecommender
 from sim4rec.utils import pandas_to_spark
 from pyspark.sql.types import LongType
 
+
 class LogRegModel(BaseRecommender):
     """
     Custom recommender based on a scikit-learn Losgistic Regression model.
     Fits using only numeric features, without scaling or categorical encoding.
     """
-    def __init__(self, seed=None):
-        super().__init__(seed)
-        self.model = LogisticRegression(max_iter = 1000, penalty = 'l1', solver = 'liblinear', C = 0.1)
+    def init(self, seed=None,
+                penalty = "l2",
+                C = 0.5,
+                solver = "saga",
+                max_iter = 1000,
+                tol = 0.0001):
+        super().init(seed)
+
+
+        self.model = LogisticRegression(max_iter = 1000, penalty = penalty, solver = solver, C = C, tol = tol)
         self.scaler = StandardScaler()
         self.numerical_features = [] # Will store the names of numerical features used for fitting
         self.categorical_features = [] # Will store the names of categorical features used for fitting
