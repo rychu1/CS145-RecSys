@@ -4,6 +4,9 @@
 # We'll generate synthetic data, compare multiple baseline recommenders, and visualize their performance.
 # 
 
+# %%
+# %pip install xgboost --user
+
 # %% [markdown]
 # ## Cell: Import libraries and set up environment
 
@@ -29,21 +32,16 @@ plt.style.use('seaborn-v0_8-whitegrid')
 sns.set_style('whitegrid')
 plt.rcParams['figure.figsize'] = (14, 8)
 
-if os.name == 'nt':
-    # Fix for KeyError: 'HOME' on Windows
-    if 'HOME' not in os.environ:
-        os.environ['HOME'] = os.path.expanduser("~")
-    if 'HADOOP_HOME' not in os.environ:
-        #need to be c://hadoop on Windows
-        os.environ['HADOOP_HOME'] = "C:\\hadoop"
+
+# Fix for KeyError: 'HOME' on Windows
+if 'HOME' not in os.environ:
+    os.environ['HOME'] = os.path.expanduser("~")
+if 'HADOOP_HOME' not in os.environ:
+    #need to be c://hadoop on Windows
+    os.environ['HADOOP_HOME'] = "C:\\hadoop"
 # Set both driver and worker to use the current Python executable (should be 3.11)
 os.environ["PYSPARK_PYTHON"] = sys.executable
 os.environ["PYSPARK_DRIVER_PYTHON"] = sys.executable
-import getpass # To automatically get the current user's name
-
-# Set the HADOOP_USER_NAME environment variable
-# This must be done BEFORE the SparkSession is created
-os.environ['HADOOP_USER_NAME'] = getpass.getuser()
 
 # %% [markdown]
 # ## Initialize Spark session
@@ -69,8 +67,8 @@ from simulator import CompetitionSimulator
 from sample_recommenders import (
     RandomRecommender,
     PopularityRecommender,
-    ContentBasedRecommender, 
-    SVMRecommender, 
+    ContentBasedRecommender,
+    SVMRecommender
 )
 from config import DEFAULT_CONFIG, EVALUATION_METRICS
 
@@ -487,190 +485,9 @@ def explore_interactions(history_df, users_df, items_df):
 
 print("Data exploration functions defined.")
 
-# Cell: Recommender Analysis Function
-"""
-## Recommender System Analysis
-This is the main function to run analysis of different recommender systems and visualize the results.
-"""
-
-def run_recommender_analysis():
-    """
-    Run an analysis of different recommender systems and visualize the results.
-    This function creates a synthetic dataset, performs EDA, evaluates multiple recommendation
-    algorithms using train-test split, and visualizes the performance metrics.
-    """
-    # Create a smaller dataset for experimentation
-    config = DEFAULT_CONFIG.copy()
-    config['data_generation']['n_users'] = 1000  # Reduced from 10,000
-    config['data_generation']['n_items'] = 200   # Reduced from 1,000
-    config['data_generation']['seed'] = 42       # Fixed seed for reproducibility
-    
-    # Get train-test split parameters
-    train_iterations = config['simulation']['train_iterations']
-    test_iterations = config['simulation']['test_iterations']
-    
-    print(f"Running train-test simulation with {train_iterations} training iterations and {test_iterations} testing iterations")
-    
-    # Initialize data generator
-    data_generator = CompetitionDataGenerator(
-        spark_session=spark,
-        **config['data_generation']
-    )
-    
-    # Generate user data
-    users_df = data_generator.generate_users()
-    print(f"Generated {users_df.count()} users")
-    
-    # Generate item data
-    items_df = data_generator.generate_items()
-    print(f"Generated {items_df.count()} items")
-    
-    # Generate initial interaction history
-    history_df = data_generator.generate_initial_history(
-        config['data_generation']['initial_history_density']
-    )
-    print(f"Generated {history_df.count()} initial interactions")
-    
-    # Cell: Exploratory Data Analysis
-    """
-    ## Exploratory Data Analysis
-    Let's explore the generated synthetic data before running the recommenders.
-    """
-    
-    # Perform exploratory data analysis on the generated data
-    print("\n=== Starting Exploratory Data Analysis ===")
-    explore_user_data(users_df)
-    explore_item_data(items_df)
-    explore_interactions(history_df, users_df, items_df)
-    
-    # Set up data generators for simulator
-    user_generator, item_generator = data_generator.setup_data_generators()
-    
-    # Cell: Setup and Run Recommenders
-    """
-    ## Recommender Systems Comparison
-    Now we'll set up and evaluate different recommendation algorithms.
-    """
-    
-    # Initialize recommenders to compare
-    recommenders = [
-        SVMRecommender(seed=42), 
-        RandomRecommender(seed=42),
-        PopularityRecommender(alpha=1.0, seed=42),
-        ContentBasedRecommender(similarity_threshold=0.0, seed=42),
-        MyRecommender(seed=42)  # Add your custom recommender here
-    ]
-    recommender_names = ["SVM", "Random", "Popularity", "ContentBased", "MyRecommender"]
-    
-    # Initialize recommenders with initial history
-    for recommender in recommenders:
-        recommender.fit(log=data_generator.history_df, 
-                        user_features=users_df, 
-                        item_features=items_df)
-    
-    # Evaluate each recommender separately using train-test split
-    results = []
-    
-    for name, recommender in zip(recommender_names, recommenders):
-        print(f"\nEvaluating {name}:")
-        
-        # Clean up any existing simulator data directory for this recommender
-        simulator_data_dir = f"simulator_train_test_data_{name}"
-        if os.path.exists(simulator_data_dir):
-            shutil.rmtree(simulator_data_dir)
-            print(f"Removed existing simulator data directory: {simulator_data_dir}")
-        
-        # Initialize simulator
-        simulator = CompetitionSimulator(
-            user_generator=user_generator,
-            item_generator=item_generator,
-            data_dir=simulator_data_dir,
-            log_df=data_generator.history_df,  # PySpark DataFrames don't have copy method
-            conversion_noise_mean=config['simulation']['conversion_noise_mean'],
-            conversion_noise_std=config['simulation']['conversion_noise_std'],
-            spark_session=spark,
-            seed=config['data_generation']['seed']
-        )
-        
-        # Run simulation with train-test split
-        train_metrics, test_metrics, train_revenue, test_revenue = simulator.train_test_split(
-            recommender=recommender,
-            train_iterations=train_iterations,
-            test_iterations=test_iterations,
-            user_frac=config['simulation']['user_fraction'],
-            k=config['simulation']['k'],
-            filter_seen_items=config['simulation']['filter_seen_items'],
-            retrain=config['simulation']['retrain']
-        )
-        
-        # Calculate average metrics
-        train_avg_metrics = {}
-        for metric_name in train_metrics[0].keys():
-            values = [metrics[metric_name] for metrics in train_metrics]
-            train_avg_metrics[f"train_{metric_name}"] = np.mean(values)
-        
-        test_avg_metrics = {}
-        for metric_name in test_metrics[0].keys():
-            values = [metrics[metric_name] for metrics in test_metrics]
-            test_avg_metrics[f"test_{metric_name}"] = np.mean(values)
-        
-        # Store results
-        results.append({
-            "name": name,
-            "train_total_revenue": sum(train_revenue),
-            "test_total_revenue": sum(test_revenue),
-            "train_avg_revenue": np.mean(train_revenue),
-            "test_avg_revenue": np.mean(test_revenue),
-            "train_metrics": train_metrics,
-            "test_metrics": test_metrics,
-            "train_revenue": train_revenue,
-            "test_revenue": test_revenue,
-            **train_avg_metrics,
-            **test_avg_metrics
-        })
-        
-        # Print summary for this recommender
-        print(f"  Training Phase - Total Revenue: {sum(train_revenue):.2f}")
-        print(f"  Testing Phase - Total Revenue: {sum(test_revenue):.2f}")
-        performance_change = ((sum(test_revenue) / len(test_revenue)) / (sum(train_revenue) / len(train_revenue)) - 1) * 100
-        print(f"  Performance Change: {performance_change:.2f}%")
-    
-    # Convert to DataFrame for easy comparison
-    results_df = pd.DataFrame(results)
-    results_df = results_df.sort_values("test_total_revenue", ascending=False).reset_index(drop=True)
-    
-    # Print summary table
-    print("\nRecommender Evaluation Results (sorted by test revenue):")
-    summary_cols = ["name", "train_total_revenue", "test_total_revenue", 
-                   "train_avg_revenue", "test_avg_revenue",
-                   "train_precision_at_k", "test_precision_at_k",
-                   "train_ndcg_at_k", "test_ndcg_at_k",
-                   "train_mrr", "test_mrr",
-                   "train_discounted_revenue", "test_discounted_revenue"]
-    summary_cols = [col for col in summary_cols if col in results_df.columns]
-    
-    print(results_df[summary_cols].to_string(index=False))
-    
-    # Cell: Results Visualization
-    """
-    ## Results Visualization
-    Now we'll visualize the performance of the different recommenders.
-    """
-    
-    # Generate comparison plots
-    visualize_recommender_performance(results_df, recommender_names)
-    
-    # Generate detailed metrics visualizations
-    visualize_detailed_metrics(results_df, recommender_names)
-    
-    return results_df
-
-
-# Cell: Performance Visualization Functions
-"""
-## Performance Visualization Functions
-These functions create visualizations for comparing recommender performance.
-"""
+# %% [markdown]
+# ## Performance Visualization Functions
+# These functions create visualizations for comparing recommender performance.
 
 # %%
 def visualize_recommender_performance(results_df, recommender_names):
@@ -952,7 +769,7 @@ print("Performance visualization functions defined.")
 config = DEFAULT_CONFIG.copy()
 config['data_generation']['n_users'] = 1000  # Reduced from 10,000
 config['data_generation']['n_items'] = 200   # Reduced from 1,000
-config['data_generation']['seed'] = 29       # Fixed seed for reproducibility
+config['data_generation']['seed'] = 42       # Fixed seed for reproducibility
 
 # Get train-test split parameters
 train_iterations = config['simulation']['train_iterations']
@@ -993,50 +810,24 @@ print("Exploratory analysis complete.")
 # %%
 # Prepare data generators for the simulator
 user_generator, item_generator = data_generator.setup_data_generators()
-from recommenders.checkpoint1.gradientBoost import GradientBoostRecommender
-from recommenders.checkpoint1.linearRegression import LinearRegressionRecommender
-from recommenders.checkpoint1.KNN import KNNRecommender
-from recommenders.checkpoint1.logistic_regression import LogRegModel
-from recommenders.checkpoint2.sequential_reccomenders import RNNRecommender,LSTMRecommender,TransformerRecommender
-from recommenders.checkpoint3.graphCN import GraphCNRecommender
-from recommenders.checkpoint3.LightGCN import LightGCNRecommender
-from recommenders.checkpoint3.tower import TwoTowerRecommender
-from recommenders.checkpoint3.lstm import MyLSTMRecommender
-from recommenders.hybrid import HybridRecommender
+from gradientBoost import GradientBoostRecommender
+from linearRegression import LinearRegressionRecommender
 # Initialize the recommenders we want to compare
 recommenders = [
-    RandomRecommender(seed=config['data_generation']['seed']),
-    # PopularityRecommender(alpha=1.0, seed=config['data_generation']['seed']),
-    # ContentBasedRecommender(similarity_threshold=0.0, seed=config['data_generation']['seed']),
-    # LinearRegressionRecommender(seed=config['data_generation']['seed']),
-    GradientBoostRecommender(seed=config['data_generation']['seed']),
-    # GraphCNRecommender(seed=config['data_generation']['seed']),
-    # LightGCNRecommender(seed=config['data_generation']['seed']),
-    KNNRecommender( seed=config['data_generation']['seed']),
-    # RNNRecommender(seed=config['data_generation']['seed']),
-    # LSTMRecommender(seed=config['data_generation']['seed']),
-    # TransformerRecommender(seed=config['data_generation']['seed']),
-    LogRegModel(seed=config['data_generation']['seed']),
-    # TwoTowerRecommender(seed=config['data_generation']['seed']),
-    # MyLSTMRecommender(seed=config['data_generation']['seed']),
-    # HybridRecommender(seed=config['data_generation']['seed']),
+    RandomRecommender(seed=42),
+    # PopularityRecommender(alpha=1.0, seed=42),
+    # ContentBasedRecommender(similarity_threshold=0.0, seed=42),
+    MyRecommender(seed=42),  # Custom template class
+    # LinearRegressionRecommender(seed=42),
+    # GradientBoostRecommender(seed=42),
 ]
 recommender_names = [
     "Random",
     # "Popularity",
     # "ContentBased",
+    "MyRecommender",
     # "LinearRegression",
-    # "GradientBoost",
-    # "GraphCN",
-    # "LightGCN",
-    # "KNN",
-    # "RNN",
-    # "LSTM",
-    # "Transformer",
-    # "LogisticRegression",
-    # "TwoTower",
-    # "MyLSTM",
-    # "Hybrid"
+    # "GradientBoost"
     ]
 # Fit each recommender on the initial history
 for recommender in recommenders:
@@ -1150,11 +941,11 @@ else:
 # ## Results Visualization
 
 # %%
-# print("\n=== Visualizing Recommender Performance ===")
+print("\n=== Visualizing Recommender Performance ===")
 visualize_recommender_performance(results_df, recommender_names)
-# visualize_detailed_metrics(results_df, recommender_names)
+visualize_detailed_metrics(results_df, recommender_names)
 
-# print("\nVisualization complete.")
+print("\nVisualization complete.")
 
 # %%
 
